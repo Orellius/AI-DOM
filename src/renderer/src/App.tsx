@@ -148,23 +148,23 @@ function App(): JSX.Element {
     </div>
   )
 
-  // Overlay content (slides in over Stream)
+  // Overlay content (slides in over Stream) — no extra panel wrapper, overlay provides the container
   const renderOverlayContent = (tab: OverlayTab): JSX.Element => {
     switch (tab) {
       case 'graph':
-        return <div className="panel glow-accent h-full overflow-hidden"><NeuralMap /></div>
+        return <NeuralMap />
       case 'changes':
-        return <div className="panel h-full overflow-hidden"><FileChangeFeed /></div>
+        return <FileChangeFeed />
       case 'server':
-        return <div className="panel h-full overflow-hidden"><DevServerPanel /></div>
+        return <DevServerPanel />
       case 'preview':
-        return <div className="panel h-full overflow-hidden"><LiveBrowser /></div>
+        return <LiveBrowser />
       case 'config':
-        return <div className="panel h-full overflow-hidden"><SettingsPanel /></div>
+        return <SettingsPanel />
       case 'optimizer':
-        return <div className="panel h-full overflow-hidden"><ModelOptimizer /></div>
+        return <ModelOptimizer />
       case 'workspace-profile':
-        return <div className="panel h-full overflow-hidden"><WorkspaceProfile /></div>
+        return <WorkspaceProfile />
       default:
         return <div />
     }
@@ -489,7 +489,7 @@ function App(): JSX.Element {
                 </span>
               </div>
               {/* Panel content */}
-              <div className="flex-1 overflow-hidden p-3">
+              <div className="flex-1 overflow-y-auto p-3">
                 {renderOverlayContent(overlayTab)}
               </div>
             </div>

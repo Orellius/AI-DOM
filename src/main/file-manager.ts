@@ -67,7 +67,7 @@ export class FileManager {
 
     for (const entry of entries) {
       if (FileManager.SKIP_DIRS.has(entry.name)) continue
-      if (entry.name.startsWith('.') && entry.name !== '.env' && entry.name !== '.gitignore') continue
+      if (entry.name.startsWith('.') && entry.name !== '.env' && entry.name !== '.gitignore' && entry.name !== '.vibe') continue
 
       const fullPath = join(absPath, entry.name)
       try {

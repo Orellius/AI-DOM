@@ -462,7 +462,7 @@ function App(): JSX.Element {
           {overlayTab && (
             <div
               key={overlayTab}
-              className="absolute inset-0 z-10 flex flex-col animate-slide-in-left"
+              className="absolute inset-0 z-50 flex flex-col animate-slide-in-left"
               style={{ background: 'var(--color-base)', borderRadius: '12px' }}
             >
               {/* Back arrow header */}

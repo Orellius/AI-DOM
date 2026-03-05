@@ -303,6 +303,8 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
         const project = updated.find((p) => p.path === path)
         if (project) {
           switchProject(project)
+          // Refresh file tree to show new .vibe/ folder
+          setTimeout(() => useAgentStore.getState().refreshFileTree(), 300)
         }
       } else {
         addActivity({ type: 'error', content: `Scaffold failed: ${result.output}` })

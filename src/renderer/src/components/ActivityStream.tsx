@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
 import { Wrench, FileText, AlertCircle, Zap, Eraser } from 'lucide-react'
 import { useAgentStore, ActivityEntry } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
@@ -6,6 +6,7 @@ import { ModeSwitchBanner } from './ModeSwitchBanner'
 import { PlanBubble } from './PlanBubble'
 import { PlanPanel } from './PlanPanel'
 import { AtomicConfirmOverlay } from './AtomicConfirmButton'
+import { PlanDetectionBanner, detectPlan } from './PlanDetectionBanner'
 
 function formatTime(timestamp: number): string {
   const diff = Math.floor((Date.now() - timestamp) / 1000)
@@ -43,6 +44,19 @@ export function ActivityStream(): JSX.Element {
   const clearActivityLog = useAgentStore((s) => s.clearActivityLog)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Detect plan-like content in the most recent text entries
+  const lastPlanContent = useMemo(() => {
+    for (let i = activityLog.length - 1; i >= 0; i--) {
+      const entry = activityLog[i]
+      if (entry.type === 'text' && entry.content.length > 100 && detectPlan(entry.content)) {
+        return entry.content
+      }
+      // Only look at recent entries
+      if (activityLog.length - i > 10) break
+    }
+    return null
+  }, [activityLog])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [activityLog.length])
@@ -56,6 +70,8 @@ export function ActivityStream(): JSX.Element {
       <ModeSwitchBanner />
       {/* Dangerous command overlay */}
       <AtomicConfirmOverlay />
+      {/* Plan detection banner */}
+      {lastPlanContent && <PlanDetectionBanner planContent={lastPlanContent} />}
       {/* Header */}
       <div
         className="flex items-center gap-2 px-4 py-2.5 shrink-0"

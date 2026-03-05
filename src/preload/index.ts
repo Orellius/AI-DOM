@@ -43,6 +43,7 @@ const api = {
     ipcRenderer.invoke('agent:submit-chat', text, options),
   cancelChat: () => ipcRenderer.invoke('agent:cancel-chat'),
   clearChat: () => ipcRenderer.invoke('agent:clear-chat'),
+  submitPlanMessage: (text: string) => ipcRenderer.invoke('agent:submit-plan-message', text),
   setModel: (model: string) => ipcRenderer.invoke('agent:set-model', model),
   setPermissionTier: (tier: 'normal' | 'bypass') => ipcRenderer.invoke('agent:set-permission-tier', tier),
   approveDangerousCommand: (id: string) => ipcRenderer.invoke('agent:approve-dangerous-command', id),

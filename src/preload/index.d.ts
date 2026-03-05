@@ -50,6 +50,9 @@ type AgentEvent =
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
   | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
+  | { type: 'plan:text'; content: string }
+  | { type: 'plan:done' }
+  | { type: 'plan:error'; error: string }
 
 interface IntentOptions {
   permissions: { files: boolean; terminal: boolean; search: boolean; skipPermissions: boolean }
@@ -197,6 +200,7 @@ interface ApiInterface {
   submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) => Promise<void>
   cancelChat: () => Promise<void>
   clearChat: () => Promise<void>
+  submitPlanMessage: (text: string) => Promise<void>
   setModel: (model: string) => Promise<void>
   setPermissionTier: (tier: 'normal' | 'bypass') => Promise<void>
   approveDangerousCommand: (id: string) => Promise<void>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Eraser, Terminal, Wrench, ChevronRight } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import type { ChatMessage } from '../stores/agentStore'
@@ -9,6 +9,7 @@ import { MarkdownContent } from './MarkdownContent'
 import { AtomicConfirmOverlay } from './AtomicConfirmButton'
 import { MessageContextMenu, buildMessageActions } from './MessageContextMenu'
 import type { ContextMenuAction } from './MessageContextMenu'
+import { PlanDetectionBanner, detectPlan } from './PlanDetectionBanner'
 
 function ToolCallCard({ name, input }: { name: string; input: string }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
@@ -244,6 +245,16 @@ export function ChatPanel(): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msgId: string; actions: ContextMenuAction[] } | null>(null)
 
+  // Detect plan-like content in the last assistant message
+  const lastPlanContent = useMemo(() => {
+    if (chatStreaming) return null
+    const lastAssistant = [...chatMessages].reverse().find(m => m.role === 'assistant' && !m.isStreaming)
+    if (lastAssistant && lastAssistant.content.length > 100 && detectPlan(lastAssistant.content)) {
+      return lastAssistant.content
+    }
+    return null
+  }, [chatMessages, chatStreaming])
+
   // Auto-scroll on new messages
   useEffect(() => {
     if (scrollRef.current) {
@@ -292,6 +303,9 @@ export function ChatPanel(): JSX.Element {
 
       {/* Dangerous command overlay */}
       <AtomicConfirmOverlay />
+
+      {/* Plan detection banner */}
+      {lastPlanContent && <PlanDetectionBanner planContent={lastPlanContent} />}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 pr-1">

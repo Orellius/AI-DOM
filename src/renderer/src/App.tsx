@@ -28,6 +28,7 @@ import { DevServerPanel } from './components/DevServerPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { ProfileBuilder } from './components/ProfileBuilder'
 import { ChatPanel } from './components/ChatPanel'
+import { PlanMode } from './components/PlanMode'
 import { ModelOptimizer } from './components/ModelOptimizer'
 import { GitModal } from './components/GitModal'
 import { UmbrellaSync } from './components/UmbrellaSync'
@@ -140,9 +141,9 @@ function App(): JSX.Element {
       case 'stream':
         return (
           <div className="flex gap-2.5 h-full min-h-0">
-            {/* Center: Terminal or Chat — expanded, takes most space */}
+            {/* Center: Terminal, Chat, or Plan — expanded, takes most space */}
             <div className="flex-1 min-h-0 overflow-hidden">
-              {mode === 'chat' ? <ChatPanel /> : <ActivityStream />}
+              {mode === 'plan' ? <PlanMode /> : mode === 'chat' ? <ChatPanel /> : <ActivityStream />}
             </div>
             {/* Right: Projects + Architect + Intents */}
             <div className="panel overflow-hidden" style={{ width: '260px', flexShrink: 0 }}>
@@ -235,7 +236,7 @@ function App(): JSX.Element {
           <div className="flex-1 flex flex-col gap-0.5 py-2 px-1.5 overflow-hidden">
             {NAV_ITEMS.filter((item) => item.id !== 'preview' || previewUrl).map((item) => {
               const Icon = item.icon
-              const isActive = activeTab === item.id && mode === 'terminal'
+              const isActive = activeTab === item.id
               return (
                 <button
                   key={item.id}

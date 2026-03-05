@@ -1,7 +1,8 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { X, Edit3, Save, XCircle } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
+import { MarkdownContent } from './MarkdownContent'
 
 const KEYWORDS = new Set([
   'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while',
@@ -98,6 +99,7 @@ export function FileViewer(): JSX.Element | null {
 
   const lines = selectedFile.content.split('\n')
   const pathParts = selectedFile.relativePath.split('/')
+  const isMarkdown = /\.(md|mdx)$/i.test(selectedFile.relativePath)
 
   const handleEdit = useCallback(() => {
     setEditContent(selectedFile!.content)
@@ -265,28 +267,34 @@ export function FileViewer(): JSX.Element | null {
         />
       ) : (
         <div className="flex-1 overflow-auto" style={{ padding: '8px 0' }}>
-          <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: scaled(12), lineHeight: 1.6 }}>
-            {lines.map((line, i) => (
-              <div key={i} className="flex" style={{ minHeight: '1.6em' }}>
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: '48px',
-                    textAlign: 'right',
-                    paddingRight: '12px',
-                    color: 'rgba(255, 255, 255, 0.2)',
-                    userSelect: 'none',
-                    flexShrink: 0,
-                  }}
-                >
-                  {i + 1}
-                </span>
-                <span style={{ color: 'var(--color-text)', paddingRight: '12px' }}>
-                  {highlightLine(line)}
-                </span>
-              </div>
-            ))}
-          </pre>
+          {isMarkdown ? (
+            <div style={{ padding: '8px 16px' }}>
+              <MarkdownContent content={selectedFile.content} fullDocument />
+            </div>
+          ) : (
+            <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: scaled(12), lineHeight: 1.6 }}>
+              {lines.map((line, i) => (
+                <div key={i} className="flex" style={{ minHeight: '1.6em' }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: '48px',
+                      textAlign: 'right',
+                      paddingRight: '12px',
+                      color: 'rgba(255, 255, 255, 0.2)',
+                      userSelect: 'none',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {i + 1}
+                  </span>
+                  <span style={{ color: 'var(--color-text)', paddingRight: '12px' }}>
+                    {highlightLine(line)}
+                  </span>
+                </div>
+              ))}
+            </pre>
+          )}
         </div>
       )}
     </div>

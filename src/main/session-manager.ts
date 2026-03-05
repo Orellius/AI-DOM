@@ -438,6 +438,46 @@ export class SessionManager extends EventEmitter {
     return result
   }
 
+  async runPlanner(prompt: string): Promise<void> {
+    const sdkQuery = await getQuery()
+    if (!sdkQuery) throw new Error('Failed to load Agent SDK')
+
+    const q = sdkQuery({
+      prompt,
+      options: {
+        env: getSdkEnv(),
+        model: 'sonnet',
+        maxTurns: 1,
+        systemPrompt: 'You are a planning assistant for a software engineering team. Create detailed, structured implementation plans in markdown format. Include: overview, file list (as a markdown table), implementation phases with numbered steps, verification checklist, and key considerations. Be thorough but concise.',
+        disallowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        stderr: (data: string) => {
+          console.warn('[VIBE:SDK:planner:stderr]', data.slice(0, 500))
+        },
+      } as never
+    })
+
+    try {
+      for await (const msg of q as AsyncIterable<{ type: string; result?: string; message?: { content: Array<{ type: string; text?: string }> } }>) {
+        if (msg.type === 'assistant' && msg.message) {
+          for (const block of msg.message.content) {
+            if (block.type === 'text' && block.text) {
+              this.emitEvent({ type: 'plan:text', content: block.text })
+            }
+          }
+        }
+        if (msg.type === 'result' && msg.result) {
+          this.emitEvent({ type: 'plan:text', content: msg.result })
+        }
+      }
+      this.emitEvent({ type: 'plan:done' })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      this.emitEvent({ type: 'plan:error', error: errMsg })
+    }
+  }
+
   async runWorker(taskId: string, opts: WorkerOpts): Promise<string> {
     const sdkQuery = await getQuery()
     if (!sdkQuery) throw new Error('Failed to load Agent SDK')

@@ -42,6 +42,9 @@ export type AgentEvent =
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
   | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
+  | { type: 'plan:text'; content: string }
+  | { type: 'plan:done' }
+  | { type: 'plan:error'; error: string }
 
 // --- Dangerous Command ---
 
@@ -130,7 +133,7 @@ export interface ClaudeConnectivity {
 
 // --- App Mode ---
 
-export type AppMode = 'terminal' | 'chat'
+export type AppMode = 'terminal' | 'chat' | 'plan'
 
 export interface ChatMessage {
   id: string
@@ -154,6 +157,7 @@ export interface ModeSwitchPrompt {
 // --- Store ---
 
 let activityCounter = 0
+let lastDiagnosisKey = ''
 
 interface AgentState {
   tasks: Record<string, AgentTask>
@@ -256,6 +260,12 @@ interface AgentState {
   voiceLastTranslation: { from: string; to: string; original: string } | null
   whisperModelProgress: number | null
 
+  // Plan mode state
+  planMessages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>
+  planCurrentDraft: string | null
+  planStreaming: boolean
+  planDetectionDismissed: boolean
+
   // Existing actions
   handleEvent: (event: AgentEvent) => void
   submitIntent: (text: string) => void
@@ -331,6 +341,16 @@ interface AgentState {
   setVoiceAutoMode: (autoMode: boolean) => void
   setVoiceLastTranslation: (t: { from: string; to: string; original: string } | null) => void
   downloadWhisperModel: () => Promise<void>
+
+  // Plan mode actions
+  addPlanMessage: (msg: { role: 'user' | 'assistant'; content: string }) => void
+  setPlanCurrentDraft: (draft: string | null) => void
+  submitPlan: (text: string) => void
+  acceptPlan: () => void
+  clearPlan: () => void
+  setMode: (mode: AppMode) => void
+  dismissPlanDetection: () => void
+  resetPlanDetection: () => void
 
   // File explorer actions
   loadDirectory: (relativePath: string) => Promise<void>
@@ -422,6 +442,12 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   selectedFile: null,
   fileViewerOpen: false,
   fileViewerDirty: false,
+
+  // Plan mode defaults
+  planMessages: [],
+  planCurrentDraft: null,
+  planStreaming: false,
+  planDetectionDismissed: false,
 
   // Voice defaults
   voiceConfig: null,
@@ -768,6 +794,36 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         }))
         addActivity({ type: 'system', content: `Command rejected: ${event.command}` })
         break
+
+      // --- Plan events ---
+
+      case 'plan:text':
+        set((state) => {
+          const msgs = [...state.planMessages]
+          const last = msgs[msgs.length - 1]
+          if (last && last.role === 'assistant') {
+            msgs[msgs.length - 1] = { ...last, content: last.content + event.content }
+          } else {
+            msgs.push({ role: 'assistant', content: event.content, timestamp: Date.now() })
+          }
+          return { planMessages: msgs, planStreaming: true }
+        })
+        break
+
+      case 'plan:done':
+        set((state) => {
+          const lastAssistant = [...state.planMessages].reverse().find(m => m.role === 'assistant')
+          return {
+            planStreaming: false,
+            planCurrentDraft: lastAssistant?.content || state.planCurrentDraft,
+          }
+        })
+        break
+
+      case 'plan:error':
+        set({ planStreaming: false })
+        addActivity({ type: 'error', content: `Plan error: ${event.error}` })
+        break
     }
   },
 
@@ -830,7 +886,15 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   // --- Mode actions ---
 
   toggleMode: () => {
-    set((state) => ({ mode: state.mode === 'terminal' ? 'chat' : 'terminal' }))
+    set((state) => {
+      const cycle: AppMode[] = ['terminal', 'chat', 'plan']
+      const idx = cycle.indexOf(state.mode)
+      return { mode: cycle[(idx + 1) % cycle.length] }
+    })
+  },
+
+  setMode: (mode) => {
+    set({ mode })
   },
 
   showModeSwitchPrompt: (direction) => {
@@ -1209,10 +1273,15 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   },
 
   diagnoseActiveProject: () => {
+    const activeProject = get().activeProject
     window.api.diagnoseProject().then((diagnosis) => {
       set({ projectDiagnosis: diagnosis })
-      const { addActivity } = get()
       const { git, stack, pulse, suggestions } = diagnosis
+      // Dedup: skip if identical diagnosis for the same project
+      const diagKey = `${activeProject?.name}:${git.branch}:${git.uncommittedCount}:${stack.language}:${stack.framework}:${pulse.diagnosticCount}`
+      if (diagKey === lastDiagnosisKey) return
+      lastDiagnosisKey = diagKey
+      const { addActivity } = get()
       const gitLine = `Git: ${git.branch || 'no branch'}${git.uncommittedCount ? ` | ${git.uncommittedCount} uncommitted` : ''}${git.unpushedCount ? ` | ${git.unpushedCount} unpushed` : ''}${git.lastCommitMessage ? ` | "${git.lastCommitMessage}"` : ''}`
       const stackLine = `Stack: ${stack.language}${stack.framework ? ` / ${stack.framework}` : ''}${stack.packageManager ? ` (${stack.packageManager})` : ''}`
       const pulseLine = `Pulse: ${pulse.entryFiles.length} entry files${pulse.diagnosticCount ? ` | ${pulse.diagnosticCount} diagnostics` : ''}`
@@ -1348,6 +1417,50 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
   closeFileViewer: () => {
     set({ selectedFile: null, fileViewerOpen: false, fileViewerDirty: false })
+  },
+
+  // --- Plan mode actions ---
+
+  addPlanMessage: (msg) => {
+    set((state) => ({
+      planMessages: [...state.planMessages, { ...msg, timestamp: Date.now() }]
+    }))
+  },
+
+  setPlanCurrentDraft: (draft) => {
+    set({ planCurrentDraft: draft, planDetectionDismissed: false })
+  },
+
+  submitPlan: (text) => {
+    const { addPlanMessage } = get()
+    addPlanMessage({ role: 'user', content: text })
+    set({ planStreaming: true })
+    window.api.submitPlanMessage(text).catch((err: unknown) => {
+      console.error('[VIBE:Store] submitPlan error:', err)
+      set({ planStreaming: false })
+    })
+  },
+
+  acceptPlan: () => {
+    const { planCurrentDraft, planMessages } = get()
+    const planText = planCurrentDraft || planMessages.filter(m => m.role === 'assistant').pop()?.content
+    if (!planText) return
+    set({ mode: 'terminal', planCurrentDraft: null })
+    // Send the plan to the terminal session for execution
+    const { submitIntent } = get()
+    submitIntent(`Execute this plan:\n\n${planText}`)
+  },
+
+  clearPlan: () => {
+    set({ planMessages: [], planCurrentDraft: null, planStreaming: false })
+  },
+
+  dismissPlanDetection: () => {
+    set({ planDetectionDismissed: true })
+  },
+
+  resetPlanDetection: () => {
+    set({ planDetectionDismissed: false })
   },
 
   // --- Voice actions ---

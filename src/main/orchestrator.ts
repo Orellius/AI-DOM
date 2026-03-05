@@ -72,6 +72,9 @@ export type AgentEvent =
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
   | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
+  | { type: 'plan:text'; content: string }
+  | { type: 'plan:done' }
+  | { type: 'plan:error'; error: string }
 
 export interface ProjectDiagnosis {
   git: {
@@ -925,6 +928,13 @@ export class AgentOrchestrator extends EventEmitter {
   clearChatSession(): void {
     this.sessionManager.clearChat()
     this.sessionManager.clearNonAnthropicChat()
+  }
+
+  async submitPlanMessage(text: string): Promise<void> {
+    if (!text || typeof text !== 'string') throw new Error('Plan text must be a non-empty string')
+    const sanitized = text.trim().slice(0, 50_000)
+    if (!sanitized) throw new Error('Plan text is empty after sanitization')
+    await this.sessionManager.runPlanner(sanitized)
   }
 
   setModel(model: string): void {

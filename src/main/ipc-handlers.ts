@@ -262,6 +262,11 @@ export function registerIpcHandlers(
     orchestrator.cancelChat()
   })
 
+  ipcMain.handle('agent:submit-plan-message', (_event, text: unknown) => {
+    const validated = validateString(text, 'plan text', 50_000)
+    orchestrator.submitPlanMessage(validated)
+  })
+
   ipcMain.handle('agent:clear-chat', () => {
     orchestrator.clearChatSession()
   })

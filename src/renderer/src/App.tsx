@@ -6,13 +6,13 @@ import {
   Server,
   Settings,
   User as UserIcon,
-  Sparkles,
   CreditCard,
   PanelLeftClose,
   PanelLeftOpen,
   Sliders,
   FolderGit2,
   MonitorPlay,
+  ArrowLeft,
 } from 'lucide-react'
 import { useAgentStore } from './stores/agentStore'
 import { useAgentEvents } from './hooks/useAgentEvents'
@@ -26,7 +26,7 @@ import { Onboarding } from './components/Onboarding'
 import { FileChangeFeed } from './components/FileChangeFeed'
 import { DevServerPanel } from './components/DevServerPanel'
 import { SettingsPanel } from './components/SettingsPanel'
-import { ProfileBuilder } from './components/ProfileBuilder'
+import { WorkspaceProfile } from './components/WorkspaceProfile'
 import { ChatPanel } from './components/ChatPanel'
 import { PlanMode } from './components/PlanMode'
 import { ModelOptimizer } from './components/ModelOptimizer'
@@ -41,12 +41,11 @@ const NAV_ITEMS = [
   { id: 'changes', label: 'Changes', icon: FileCode2 },
   { id: 'server', label: 'Server', icon: Server },
   { id: 'preview', label: 'Preview', icon: MonitorPlay },
-  { id: 'config', label: 'Config', icon: Settings },
   { id: 'optimizer', label: 'Optimizer', icon: Sliders },
-  { id: 'profile', label: 'Profile', icon: Sparkles },
 ] as const
 
 type NavTab = (typeof NAV_ITEMS)[number]['id']
+type OverlayTab = 'config' | 'workspace-profile' | 'graph' | 'changes' | 'server' | 'preview' | 'optimizer'
 
 function App(): JSX.Element {
   useAgentEvents()
@@ -60,6 +59,7 @@ function App(): JSX.Element {
   const refreshGitStatus = useAgentStore((s) => s.refreshGitStatus)
   const previewUrl = useAgentStore((s) => s.previewUrl)
   const [activeTab, setActiveTab] = useState<NavTab>('stream')
+  const [overlayTab, setOverlayTab] = useState<OverlayTab | null>(null)
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [onboardingDone, setOnboardingDone] = useState(() => localStorage.getItem('vibeflow:onboarding-complete') === 'true')
 
@@ -92,8 +92,9 @@ function App(): JSX.Element {
     })
   }, [])
 
-  // Restore last active project on startup
+  // Restore last active project on startup — only after onboarding
   useEffect(() => {
+    if (!onboardingDone) return
     window.api.getActiveProject().then((activePath) => {
       if (!activePath) return
       window.api.getProjects().then((projects) => {
@@ -106,7 +107,7 @@ function App(): JSX.Element {
         }
       }).catch(() => {})
     }).catch(() => {})
-  }, [])
+  }, [onboardingDone])
 
   // Poll git status every 10s (only when a project is active)
   useEffect(() => {
@@ -135,64 +136,58 @@ function App(): JSX.Element {
     return <Onboarding />
   }
 
-  // Each tab renders full-width in the content area
-  const renderTabContent = (): JSX.Element => {
-    switch (activeTab) {
-      case 'stream':
-        return (
-          <div className="flex gap-2.5 h-full min-h-0">
-            {/* Center: Terminal, Chat, or Plan — expanded, takes most space */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {mode === 'plan' ? <PlanMode /> : mode === 'chat' ? <ChatPanel /> : <ActivityStream />}
-            </div>
-            {/* Right: Projects + Architect + Intents */}
-            <div className="panel overflow-hidden" style={{ width: '260px', flexShrink: 0 }}>
-              <RightSidebar />
-            </div>
-          </div>
-        )
+  // Stream content always renders underneath (never destroyed)
+  const renderStreamContent = (): JSX.Element => (
+    <div className="flex gap-2.5 h-full min-h-0">
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {mode === 'plan' ? <PlanMode /> : mode === 'chat' ? <ChatPanel /> : <ActivityStream />}
+      </div>
+      <div className="panel overflow-hidden" style={{ width: '260px', flexShrink: 0 }}>
+        <RightSidebar />
+      </div>
+    </div>
+  )
+
+  // Overlay content (slides in over Stream)
+  const renderOverlayContent = (tab: OverlayTab): JSX.Element => {
+    switch (tab) {
       case 'graph':
-        return (
-          <div className="panel glow-accent h-full overflow-hidden">
-            <NeuralMap />
-          </div>
-        )
+        return <div className="panel glow-accent h-full overflow-hidden"><NeuralMap /></div>
       case 'changes':
-        return (
-          <div className="panel h-full overflow-hidden">
-            <FileChangeFeed />
-          </div>
-        )
+        return <div className="panel h-full overflow-hidden"><FileChangeFeed /></div>
       case 'server':
-        return (
-          <div className="panel h-full overflow-hidden">
-            <DevServerPanel />
-          </div>
-        )
+        return <div className="panel h-full overflow-hidden"><DevServerPanel /></div>
       case 'preview':
-        return (
-          <div className="panel h-full overflow-hidden">
-            <LiveBrowser />
-          </div>
-        )
+        return <div className="panel h-full overflow-hidden"><LiveBrowser /></div>
       case 'config':
-        return (
-          <div className="panel h-full overflow-hidden">
-            <SettingsPanel />
-          </div>
-        )
+        return <div className="panel h-full overflow-hidden"><SettingsPanel /></div>
       case 'optimizer':
-        return (
-          <div className="panel h-full overflow-hidden">
-            <ModelOptimizer />
-          </div>
-        )
-      case 'profile':
-        return (
-          <div className="panel h-full overflow-hidden">
-            <ProfileBuilder />
-          </div>
-        )
+        return <div className="panel h-full overflow-hidden"><ModelOptimizer /></div>
+      case 'workspace-profile':
+        return <div className="panel h-full overflow-hidden"><WorkspaceProfile /></div>
+      default:
+        return <div />
+    }
+  }
+
+  const OVERLAY_LABELS: Record<OverlayTab, string> = {
+    graph: 'Graph',
+    changes: 'Changes',
+    server: 'Server',
+    preview: 'Preview',
+    config: 'Settings',
+    optimizer: 'Optimizer',
+    'workspace-profile': 'Workspace Profile',
+  }
+
+  // Sidebar tab click → open overlay (or toggle back to stream)
+  const handleTabClick = (tabId: NavTab): void => {
+    if (tabId === 'stream') {
+      setOverlayTab(null)
+      setActiveTab('stream')
+    } else {
+      setActiveTab(tabId)
+      setOverlayTab(tabId as OverlayTab)
     }
   }
 
@@ -240,7 +235,7 @@ function App(): JSX.Element {
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => handleTabClick(item.id)}
                   className="no-drag flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-all w-full text-left"
                   style={{
                     background: isActive ? 'rgba(0, 232, 157, 0.06)' : 'transparent',
@@ -378,17 +373,57 @@ function App(): JSX.Element {
             padding: '10px 8px',
           }}
         >
-          <UmbrellaSync />
+          <UmbrellaSync
+            onOpenWorkspaceProfile={() => { setOverlayTab('workspace-profile'); setActiveTab('stream') }}
+            onOpenSettings={() => { setOverlayTab('config'); setActiveTab('stream') }}
+          />
         </div>
 
         {/* ── Full Content Area ── */}
         <div className="flex-1 min-h-0 flex flex-col p-3 gap-2.5">
           {activeProject ? (
             <>
-              {/* Main content — full width, full height */}
+              {/* Main content — Stream always alive, overlays slide in */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
-                {renderTabContent()}
+                {renderStreamContent()}
                 <FileViewer />
+
+                {/* Overlay panel (slides in from left over Stream) */}
+                {overlayTab && (
+                  <div
+                    key={overlayTab}
+                    className="absolute inset-0 z-10 flex flex-col animate-slide-in-left"
+                    style={{ background: 'var(--color-base)' }}
+                  >
+                    {/* Back arrow header */}
+                    <div
+                      className="flex items-center gap-2 shrink-0"
+                      style={{
+                        padding: '8px 12px',
+                        borderBottom: '1px solid var(--color-border)',
+                      }}
+                    >
+                      <button
+                        onClick={() => { setOverlayTab(null); setActiveTab('stream') }}
+                        className="btn"
+                        style={{ padding: '4px 10px', fontSize: scaled(12) }}
+                      >
+                        <ArrowLeft size={14} />
+                        Back
+                      </button>
+                      <span
+                        className="label"
+                        style={{ fontSize: scaled(11) }}
+                      >
+                        {OVERLAY_LABELS[overlayTab]}
+                      </span>
+                    </div>
+                    {/* Panel content */}
+                    <div className="flex-1 overflow-hidden p-3">
+                      {renderOverlayContent(overlayTab)}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Bottom: Actions + Command */}

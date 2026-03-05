@@ -23,6 +23,7 @@ import { profileProject, profileToSystemPromptClause } from './project-profiler'
 import type { ProjectProfile } from './project-profiler'
 import { WorkspaceConfigManager } from './workspace-config'
 import type { ProjectEntry } from './workspace-config'
+import { WorkspaceFilesManager } from './workspace-files'
 
 // Safe env allowlist — mirrors session-manager.ts
 const SAFE_ENV_KEYS = [
@@ -145,6 +146,9 @@ export class AgentOrchestrator extends EventEmitter {
   // Workspace config (persistent project list)
   private workspaceConfig: WorkspaceConfigManager
 
+  // Workspace identity files (.vibe/)
+  private workspaceFiles: WorkspaceFilesManager
+
   // Multi-provider support
   private providerManager: ProviderManager
   private modelOptimizer: ModelOptimizer
@@ -158,8 +162,7 @@ export class AgentOrchestrator extends EventEmitter {
     this.sessionManager = new SessionManager()
     this.commandGuard = new CommandGuard()
     this.workspaceConfig = new WorkspaceConfigManager()
-    // Auto-detect projects under cwd on first launch
-    this.workspaceConfig.autoDetectFromCwd(this.getCwd())
+    this.workspaceFiles = new WorkspaceFilesManager()
     this.lspBridge = new LspBridge(this.getCwd())
     this.contextFilter = ContextFilter.load(this.getCwd())
 
@@ -761,8 +764,12 @@ export class AgentOrchestrator extends EventEmitter {
   }
 
   /** Build the intelligence context object for SessionManager. */
-  private getIntelligenceContext(): { projectProfile?: string; diagnostics?: string; exclusions?: string } {
-    const ctx: { projectProfile?: string; diagnostics?: string; exclusions?: string } = {}
+  private getIntelligenceContext(): { projectProfile?: string; diagnostics?: string; exclusions?: string; workspaceIdentity?: string } {
+    const ctx: { projectProfile?: string; diagnostics?: string; exclusions?: string; workspaceIdentity?: string } = {}
+
+    // Workspace identity (.vibe/ files) — injected first for highest priority
+    const identity = this.workspaceFiles.assembleSystemPrompt(this.getCwd())
+    if (identity) ctx.workspaceIdentity = identity
 
     if (this.projectProfile) {
       const clause = profileToSystemPromptClause(this.projectProfile)
@@ -792,6 +799,28 @@ export class AgentOrchestrator extends EventEmitter {
 
   getIgnorePatterns(): string[] {
     return this.contextFilter.getPatterns()
+  }
+
+  // --- Workspace Files (.vibe/) ---
+
+  getWorkspaceFiles(): Record<string, string> {
+    return this.workspaceFiles.readAll(this.getCwd())
+  }
+
+  readWorkspaceFile(fileName: string): string | null {
+    return this.workspaceFiles.readFile(this.getCwd(), fileName)
+  }
+
+  writeWorkspaceFile(fileName: string, content: string): void {
+    this.workspaceFiles.writeFile(this.getCwd(), fileName, content)
+  }
+
+  scaffoldWorkspaceFilesForCwd(): void {
+    const cwd = this.getCwd()
+    if (!this.workspaceFiles.hasWorkspaceFiles(cwd)) {
+      this.workspaceFiles.seedFromClaudeMd(cwd)
+    }
+    this.workspaceFiles.scaffoldWorkspaceFiles(cwd)
   }
 
   getActiveProject(): string | null {
@@ -825,6 +854,9 @@ export class AgentOrchestrator extends EventEmitter {
       // 5. Refresh intelligence for new project
       this.refreshIntelligence()
 
+      // 6. Ensure .vibe/ workspace files exist
+      this.workspaceFiles.scaffoldWorkspaceFiles(absolutePath)
+
       return { success: true }
     } catch {
       return { success: false }
@@ -835,9 +867,18 @@ export class AgentOrchestrator extends EventEmitter {
     return this.workspaceConfig.getProjects()
   }
 
+  clearWorkspace(): void {
+    this.workspaceConfig.clear()
+  }
+
   addProject(absolutePath: string): { success: boolean; projects: ProjectEntry[] } {
     try {
       const projects = this.workspaceConfig.addProjectSmart(absolutePath)
+      // Scaffold .vibe/ workspace files (seeds from CLAUDE.md if present)
+      if (!this.workspaceFiles.hasWorkspaceFiles(absolutePath)) {
+        this.workspaceFiles.seedFromClaudeMd(absolutePath)
+        this.workspaceFiles.scaffoldWorkspaceFiles(absolutePath)
+      }
       return { success: true, projects }
     } catch {
       return { success: false, projects: this.workspaceConfig.getProjects() }
@@ -1127,6 +1168,9 @@ export class AgentOrchestrator extends EventEmitter {
         writeFileSync(join(cwd, 'package.json'), JSON.stringify(pkg, null, 2), 'utf8')
         parts.push('Created package.json')
       }
+
+      // Scaffold .vibe/ workspace files alongside git + package.json
+      this.workspaceFiles.scaffoldWorkspaceFiles(cwd)
 
       this.refreshIntelligence()
       return { success: true, output: parts.join(', ') || 'Already initialized' }

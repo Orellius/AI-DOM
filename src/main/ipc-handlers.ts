@@ -299,12 +299,37 @@ export function registerIpcHandlers(
   // --- Onboarding reset (dev utility) ---
 
   ipcMain.handle('agent:reset-onboarding', () => {
+    // Clear workspace state so post-onboarding starts fresh
+    orchestrator.clearWorkspace()
     if (!mainWindow.isDestroyed()) {
       mainWindow.webContents.executeJavaScript(
         'localStorage.removeItem("vibeflow:onboarding-complete"); true'
       ).catch(() => {})
     }
     return { reset: true }
+  })
+
+  // --- Workspace Files (.vibe/) ---
+
+  ipcMain.handle('agent:get-workspace-files', () => {
+    return orchestrator.getWorkspaceFiles()
+  })
+
+  ipcMain.handle('agent:read-workspace-file', (_event, fileName: unknown) => {
+    const validated = validateString(fileName, 'fileName', 100)
+    if (!/^[A-Z]+\.md$/.test(validated)) throw new Error('Invalid workspace file name')
+    return orchestrator.readWorkspaceFile(validated)
+  })
+
+  ipcMain.handle('agent:write-workspace-file', (_event, fileName: unknown, content: unknown) => {
+    const validatedName = validateString(fileName, 'fileName', 100)
+    if (!/^[A-Z]+\.md$/.test(validatedName)) throw new Error('Invalid workspace file name')
+    if (typeof content !== 'string') throw new Error('Content must be a string')
+    orchestrator.writeWorkspaceFile(validatedName, content)
+  })
+
+  ipcMain.handle('agent:scaffold-workspace-files', () => {
+    orchestrator.scaffoldWorkspaceFilesForCwd()
   })
 
   // --- Intelligence Layer ---

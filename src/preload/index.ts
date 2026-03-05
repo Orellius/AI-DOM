@@ -50,6 +50,12 @@ const api = {
   rejectDangerousCommand: (id: string) => ipcRenderer.invoke('agent:reject-dangerous-command', id),
   listSnapshots: () => ipcRenderer.invoke('agent:list-snapshots'),
   resetOnboarding: () => ipcRenderer.invoke('agent:reset-onboarding'),
+  // Workspace files (.vibe/)
+  getWorkspaceFiles: () => ipcRenderer.invoke('agent:get-workspace-files'),
+  readWorkspaceFile: (fileName: string) => ipcRenderer.invoke('agent:read-workspace-file', fileName),
+  writeWorkspaceFile: (fileName: string, content: string) =>
+    ipcRenderer.invoke('agent:write-workspace-file', fileName, content),
+  scaffoldWorkspaceFiles: () => ipcRenderer.invoke('agent:scaffold-workspace-files'),
   getProjectProfile: () => ipcRenderer.invoke('agent:get-project-profile'),
   getLspStatus: () => ipcRenderer.invoke('agent:get-lsp-status'),
   getDiagnostics: () => ipcRenderer.invoke('agent:get-diagnostics'),

@@ -306,6 +306,23 @@ body::after {
 .animate-pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
 .animate-slide-in-right { animation: slideInRight 0.25s ease-out forwards; }
 
+/* ── Onboarding Animations ── */
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes terminalBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes slideOutLeft {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-20px); }
+}
+.animate-slide-in-left { animation: slideInLeft 0.25s ease-out forwards; }
+.animate-slide-out-left { animation: slideOutLeft 0.2s ease-in forwards; }
+.animate-terminal-blink { animation: terminalBlink 1s step-end infinite; }
+
 /* ── Atomic Confirm Button ── */
 .atomic-confirm-bar {
   animation: atomicGlow 2s ease-in-out infinite;

@@ -146,6 +146,7 @@ interface IntelligenceContext {
   projectProfile?: string
   diagnostics?: string
   exclusions?: string
+  workspaceIdentity?: string
 }
 
 interface ChatSessionOpts {
@@ -204,6 +205,8 @@ export class SessionManager extends EventEmitter {
   /** Build the full system prompt append string from guardrails + intelligence context. */
   private buildAppendPrompt(intelligence?: IntelligenceContext): string {
     let append = GUARDRAIL_SYSTEM_PROMPT
+    // Workspace identity injected first (highest priority after guardrails)
+    if (intelligence?.workspaceIdentity) append += '\n\n' + intelligence.workspaceIdentity
     if (intelligence?.projectProfile) append += '\n\n' + intelligence.projectProfile
     if (intelligence?.diagnostics) append += '\n\n' + intelligence.diagnostics
     if (intelligence?.exclusions) append += '\n\n' + intelligence.exclusions

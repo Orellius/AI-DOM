@@ -207,6 +207,11 @@ interface ApiInterface {
   rejectDangerousCommand: (id: string) => Promise<void>
   listSnapshots: () => Promise<SnapshotInfo[]>
   resetOnboarding: () => Promise<{ reset: boolean }>
+  // Workspace files (.vibe/)
+  getWorkspaceFiles: () => Promise<Record<string, string>>
+  readWorkspaceFile: (fileName: string) => Promise<string | null>
+  writeWorkspaceFile: (fileName: string, content: string) => Promise<void>
+  scaffoldWorkspaceFiles: () => Promise<void>
   getProjectProfile: () => Promise<ProjectProfile | null>
   getLspStatus: () => Promise<LspStatus>
   getDiagnostics: () => Promise<string>

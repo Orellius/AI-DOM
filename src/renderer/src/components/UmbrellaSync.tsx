@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   FolderGit2, FolderPlus, X, AlertTriangle,
   FileCode2, Braces, Cog, GitBranch, Play, Hammer, TestTube2, File,
-  ChevronDown,
+  ChevronDown, Brain,
 } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
@@ -184,7 +184,12 @@ function ProjectSummaryCard(): JSX.Element | null {
   )
 }
 
-export function UmbrellaSync(): JSX.Element {
+interface UmbrellaSyncProps {
+  onOpenWorkspaceProfile?: () => void
+  onOpenSettings?: () => void
+}
+
+export function UmbrellaSync({ onOpenWorkspaceProfile, onOpenSettings }: UmbrellaSyncProps = {}): JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [switching, setSwitching] = useState<string | null>(null)
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
@@ -284,6 +289,40 @@ export function UmbrellaSync(): JSX.Element {
           <FolderPlus size={13} />
         </button>
       </div>
+
+      {/* Workspace Profile button */}
+      {activeProject && onOpenWorkspaceProfile && (
+        <button
+          onClick={onOpenWorkspaceProfile}
+          className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 w-full text-left transition-all"
+          style={{
+            background: 'rgba(0, 232, 157, 0.04)',
+            border: '1px solid rgba(0, 232, 157, 0.1)',
+            marginBottom: '6px',
+            cursor: 'pointer',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(0, 232, 157, 0.08)'
+            e.currentTarget.style.borderColor = 'rgba(0, 232, 157, 0.2)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'rgba(0, 232, 157, 0.04)'
+            e.currentTarget.style.borderColor = 'rgba(0, 232, 157, 0.1)'
+          }}
+        >
+          <Brain size={12} style={{ color: 'var(--color-accent)', flexShrink: 0 }} />
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: scaled(11),
+              color: 'var(--color-accent)',
+              fontWeight: 500,
+            }}
+          >
+            Workspace Profile
+          </span>
+        </button>
+      )}
 
       {/* Summary Card */}
       {showCard && <ProjectSummaryCard />}
@@ -501,6 +540,40 @@ export function UmbrellaSync(): JSX.Element {
             <FilesSection />
           </div>
         </>
+      )}
+
+      {/* Settings button — fixed at bottom */}
+      {onOpenSettings && (
+        <div
+          className="shrink-0"
+          style={{
+            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+            paddingTop: '6px',
+            marginTop: '6px',
+          }}
+        >
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 w-full text-left transition-colors"
+            style={{
+              color: 'var(--color-text-dim)',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--color-surface-light)'
+              e.currentTarget.style.color = 'var(--color-text-muted)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-dim)'
+            }}
+          >
+            <Cog size={13} style={{ flexShrink: 0 }} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(11) }}>Settings</span>
+          </button>
+        </div>
       )}
     </div>
   )

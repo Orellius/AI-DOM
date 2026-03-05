@@ -267,12 +267,11 @@ function App(): JSX.Element {
             })}
           </div>
 
-          {/* ── Bottom: Settings + User + Plan (greyed out) ── */}
+          {/* Settings — separated from nav items by dimmed border */}
           <div
-            className="shrink-0 border-t px-1.5 py-2 flex flex-col gap-1.5"
-            style={{ borderColor: 'var(--color-border)' }}
+            className="shrink-0 px-1.5 py-1.5"
+            style={{ borderTop: '1px solid rgba(255, 255, 255, 0.04)' }}
           >
-            {/* Settings */}
             <button
               onClick={() => { setOverlayTab('config'); setActiveTab('stream') }}
               className="no-drag flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-all w-full text-left"
@@ -294,7 +293,13 @@ function App(): JSX.Element {
                 </span>
               )}
             </button>
+          </div>
 
+          {/* ── Bottom: User + Plan (greyed out) ── */}
+          <div
+            className="shrink-0 border-t px-1.5 py-2 flex flex-col gap-1.5"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
             {/* Subscription / Plan box */}
             <div
               className="rounded-lg px-2.5 py-2 flex items-center gap-2.5"

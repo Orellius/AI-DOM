@@ -39,6 +39,27 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
   const speechStartRef = useRef<number>(0)
   const silenceStartRef = useRef<number>(0)
   const isAutoRecordingRef = useRef(false)
+  // Guard against double-stop in VAD loop (Issue 6)
+  const isStoppingRef = useRef(false)
+
+  // Cleanup on unmount — stop mic, audio context, animation frame
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(animFrameRef.current)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {})
+        audioCtxRef.current = null
+      }
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  }, [])
 
   // Show translation badge briefly then fade
   useEffect(() => {
@@ -84,7 +105,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
         } else {
           speechStartRef.current = 0
           // If auto-recording and silence detected, stop after threshold
-          if (isAutoRecordingRef.current && voiceRecording) {
+          if (isAutoRecordingRef.current && voiceRecording && !isStoppingRef.current) {
             if (silenceStartRef.current === 0) silenceStartRef.current = now
             if (now - silenceStartRef.current > SILENCE_CONFIRM_MS) {
               isAutoRecordingRef.current = false
@@ -101,6 +122,61 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
 
     return () => cancelAnimationFrame(animFrameRef.current)
   }, [voiceRecording, voiceListening, voiceAutoMode, voiceProcessing])
+
+  // Use ref to always have latest onTranscript without recreating the callback
+  const onTranscriptRef = useRef(onTranscript)
+  onTranscriptRef.current = onTranscript
+
+  // Shared transcription handler — eliminates duplication (Issue 5)
+  const handleTranscriptionBlob = useCallback(async (chunks: Blob[]) => {
+    // Batch: recording=false + processing=true in one tick (Issue 4)
+    setVoiceRecording(false)
+    setVoiceProcessing(true)
+
+    console.log('[VIBE:Voice] handleTranscriptionBlob called, chunks:', chunks.length)
+
+    try {
+      const blob = new Blob(chunks, { type: 'audio/webm' })
+      console.log('[VIBE:Voice] blob size:', blob.size, 'bytes')
+
+      if (blob.size < 100) {
+        console.warn('[VIBE:Voice] blob too small, skipping')
+        return
+      }
+
+      const arrayBuffer = await blob.arrayBuffer()
+      const base64 = arrayBufferToBase64(arrayBuffer)
+      console.log('[VIBE:Voice] calling transcribeAudio, base64 length:', base64.length)
+
+      const result = await window.api.transcribeAudio(base64)
+      console.log('[VIBE:Voice] transcription result:', JSON.stringify(result))
+
+      if (result.text.trim()) {
+        const textToInsert = result.translatedText?.trim() || result.text.trim()
+        console.log('[VIBE:Voice] inserting text:', textToInsert)
+        onTranscriptRef.current(textToInsert)
+
+        if (result.translatedText && result.language !== 'en') {
+          useAgentStore.getState().setVoiceLastTranslation({
+            from: result.language,
+            to: 'en',
+            original: result.text.trim()
+          })
+        }
+      } else {
+        console.warn('[VIBE:Voice] transcription returned empty text')
+        setError('No speech detected')
+        setTimeout(() => setError(null), 4000)
+      }
+    } catch (err: any) {
+      console.error('[VIBE:Voice] transcription error:', err)
+      const msg = err.message || 'Transcription failed'
+      setError(msg)
+      setTimeout(() => setError(null), 8000)
+    } finally {
+      setVoiceProcessing(false)
+    }
+  }, [setVoiceRecording, setVoiceProcessing])
 
   // Start ambient listening (mic open, no recording)
   const startListening = useCallback(async () => {
@@ -121,6 +197,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
       speechStartRef.current = 0
       silenceStartRef.current = 0
       isAutoRecordingRef.current = false
+      isStoppingRef.current = false
     } catch {
       setError('Microphone access denied')
       setTimeout(() => setError(null), 4000)
@@ -142,6 +219,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
     setBars(new Array(BAR_COUNT).fill(0))
     setVoiceListening(false)
     isAutoRecordingRef.current = false
+    isStoppingRef.current = false
     speechStartRef.current = 0
     silenceStartRef.current = 0
   }, [setVoiceListening])
@@ -160,54 +238,28 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
     mediaRecorderRef.current = mediaRecorder
     chunksRef.current = []
     startTimeRef.current = Date.now()
+    isStoppingRef.current = false
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data)
     }
 
     mediaRecorder.onstop = async () => {
+      isStoppingRef.current = false
       const duration = (Date.now() - startTimeRef.current) / 1000
+      console.log('[VIBE:Voice] auto-recording stopped, duration:', duration.toFixed(2), 's, chunks:', chunksRef.current.length)
       if (duration < 0.5) {
+        console.warn('[VIBE:Voice] duration < 0.5s, discarding')
         setVoiceRecording(false)
         return
       }
-
-      setVoiceRecording(false)
-      setVoiceProcessing(true)
-
-      try {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        const arrayBuffer = await blob.arrayBuffer()
-        const base64 = arrayBufferToBase64(arrayBuffer)
-        const result = await window.api.transcribeAudio(base64)
-
-        if (result.text.trim()) {
-          // Use translated text if available, otherwise original
-          const textToInsert = result.translatedText?.trim() || result.text.trim()
-          onTranscript(textToInsert)
-
-          // Show translation badge if translated
-          if (result.translatedText && result.language !== 'en') {
-            useAgentStore.getState().setVoiceLastTranslation({
-              from: result.language,
-              to: 'en',
-              original: result.text.trim()
-            })
-          }
-        }
-      } catch (err: any) {
-        const msg = err.message || 'Transcription failed'
-        setError(msg)
-        setTimeout(() => setError(null), 4000)
-      } finally {
-        setVoiceProcessing(false)
-      }
+      await handleTranscriptionBlob(chunksRef.current)
     }
 
     mediaRecorder.start(250)
     setVoiceRecording(true)
     timerRef.current = setTimeout(() => stopRecording(), 120000)
-  }, [onTranscript, setVoiceRecording, setVoiceProcessing])
+  }, [handleTranscriptionBlob, setVoiceRecording])
 
   const startRecording = useCallback(async () => {
     try {
@@ -232,12 +284,14 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
       mediaRecorderRef.current = mediaRecorder
       chunksRef.current = []
       startTimeRef.current = Date.now()
+      isStoppingRef.current = false
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data)
       }
 
       mediaRecorder.onstop = async () => {
+        isStoppingRef.current = false
         stream.getTracks().forEach(t => t.stop())
         streamRef.current = null
         analyserRef.current = null
@@ -245,39 +299,14 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
         setBars(new Array(BAR_COUNT).fill(0))
 
         const duration = (Date.now() - startTimeRef.current) / 1000
+        console.log('[VIBE:Voice] manual recording stopped, duration:', duration.toFixed(2), 's, chunks:', chunksRef.current.length)
         if (duration < 0.5) {
+          console.warn('[VIBE:Voice] duration < 0.5s, discarding')
           setVoiceRecording(false)
           return
         }
 
-        setVoiceRecording(false)
-        setVoiceProcessing(true)
-
-        try {
-          const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-          const arrayBuffer = await blob.arrayBuffer()
-          const base64 = arrayBufferToBase64(arrayBuffer)
-          const result = await window.api.transcribeAudio(base64)
-
-          if (result.text.trim()) {
-            const textToInsert = result.translatedText?.trim() || result.text.trim()
-            onTranscript(textToInsert)
-
-            if (result.translatedText && result.language !== 'en') {
-              useAgentStore.getState().setVoiceLastTranslation({
-                from: result.language,
-                to: 'en',
-                original: result.text.trim()
-              })
-            }
-          }
-        } catch (err: any) {
-          const msg = err.message || 'Transcription failed'
-          setError(msg)
-          setTimeout(() => setError(null), 4000)
-        } finally {
-          setVoiceProcessing(false)
-        }
+        await handleTranscriptionBlob(chunksRef.current)
 
         if (audioCtxRef.current) {
           await audioCtxRef.current.close()
@@ -292,15 +321,19 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
       setError('Microphone access denied')
       setTimeout(() => setError(null), 4000)
     }
-  }, [onTranscript, setVoiceRecording, setVoiceProcessing])
+  }, [handleTranscriptionBlob, setVoiceRecording])
 
   const stopRecording = useCallback(() => {
+    if (isStoppingRef.current) return // prevent double-stop from VAD loop
+    isStoppingRef.current = true
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop()
+    } else {
+      isStoppingRef.current = false
     }
   }, [])
 
@@ -333,13 +366,16 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
     voiceListening ? 'listening' :
     'idle'
 
+  // Restyled: red idle, green when recording/speech detected
   const pillBorder =
-    pillState === 'error' ? 'rgba(239, 68, 68, 0.2)' :
-    pillState === 'recording' ? 'rgba(239, 68, 68, 0.15)' :
-    pillState === 'listening' ? 'rgba(139, 92, 246, 0.15)' :
-    'rgba(255, 255, 255, 0.04)'
+    pillState === 'error' ? 'rgba(239, 68, 68, 0.3)' :
+    pillState === 'recording' ? 'rgba(52, 211, 153, 0.25)' :
+    pillState === 'listening' ? 'rgba(239, 68, 68, 0.15)' :
+    pillState === 'idle' ? 'rgba(239, 68, 68, 0.1)' :
+    'rgba(255, 255, 255, 0.06)'
 
-  const pillOpacity = pillState === 'idle' ? 0.5 : 1
+  // Less dim idle state (0.75 instead of 0.5)
+  const pillOpacity = pillState === 'idle' ? 0.75 : 1
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: scaled(4) }}>
@@ -358,14 +394,14 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
         transition: 'opacity 0.2s ease, border-color 0.2s ease',
         minHeight: scaled(24),
       }}>
-        {/* Idle state */}
+        {/* Idle state — red toned */}
         {pillState === 'idle' && (
           <>
-            <Mic size={10} style={{ color: 'var(--color-text-dim)' }} />
+            <Mic size={10} style={{ color: '#ef4444' }} />
             <span style={{
               fontSize: scaled(9),
               fontFamily: 'var(--font-mono)',
-              color: 'var(--color-text-dim)',
+              color: 'rgba(239, 68, 68, 0.7)',
               letterSpacing: '0.03em',
             }}>
               Ready
@@ -373,7 +409,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
           </>
         )}
 
-        {/* Listening state (ambient mic open, waiting for speech) */}
+        {/* Listening state (ambient mic open, waiting for speech) — red bars */}
         {pillState === 'listening' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5px', height: scaled(16) }}>
@@ -383,7 +419,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
                   style={{
                     width: '2px',
                     borderRadius: '1px',
-                    background: `rgba(139, 92, 246, ${0.2 + v * 0.4})`,
+                    background: `rgba(239, 68, 68, ${0.2 + v * 0.5})`,
                     height: `${Math.max(2, v * 12)}px`,
                     transition: 'height 0.06s ease-out',
                   }}
@@ -393,7 +429,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
             <span style={{
               fontSize: scaled(9),
               fontFamily: 'var(--font-mono)',
-              color: 'rgba(139, 92, 246, 0.8)',
+              color: 'rgba(239, 68, 68, 0.8)',
               letterSpacing: '0.03em',
             }}>
               Listening
@@ -401,7 +437,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
           </>
         )}
 
-        {/* Recording state */}
+        {/* Recording state — green bars (speech detected) */}
         {pillState === 'recording' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5px', height: scaled(16) }}>
@@ -411,7 +447,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
                   style={{
                     width: '2px',
                     borderRadius: '1px',
-                    background: `rgba(239, 68, 68, ${0.4 + v * 0.6})`,
+                    background: `rgba(52, 211, 153, ${0.4 + v * 0.6})`,
                     height: `${Math.max(2, v * 16)}px`,
                     transition: 'height 0.06s ease-out',
                   }}
@@ -421,7 +457,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
             <span style={{
               fontSize: scaled(9),
               fontFamily: 'var(--font-mono)',
-              color: '#ef4444',
+              color: '#34d399',
               letterSpacing: '0.03em',
             }}>
               Recording
@@ -485,7 +521,7 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
         )}
       </div>
 
-      {/* Mic chip button */}
+      {/* Mic chip button — red idle, green when recording */}
       <button
         ref={buttonRef}
         onClick={handleClick}
@@ -497,8 +533,8 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
         }
         className={
           error ? 'chip chip-danger'
-          : voiceRecording ? 'chip chip-danger'
-          : voiceListening ? 'chip chip-active'
+          : voiceRecording ? 'chip chip-active'
+          : voiceListening ? 'chip chip-danger'
           : voiceProcessing ? 'chip chip-active'
           : 'chip'
         }
@@ -506,6 +542,8 @@ export function VoiceInput({ onTranscript }: VoiceInputProps): JSX.Element {
           cursor: voiceProcessing ? 'wait' : 'pointer',
           padding: `${scaled(5)} ${scaled(8)}`,
           animation: voiceRecording ? 'voice-pulse 1.5s ease-in-out infinite' : 'none',
+          ...(pillState === 'idle' ? { borderColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' } : {}),
+          ...(pillState === 'recording' ? { borderColor: 'rgba(52, 211, 153, 0.2)', color: '#34d399' } : {}),
         }}
       >
         {voiceProcessing ? (

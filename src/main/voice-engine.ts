@@ -24,6 +24,7 @@ export interface VoiceConfig {
   provider: 'auto' | 'local' | 'groq' | 'sidecar'
   groqApiKey: string | null
   autoTranslate: boolean
+  voiceAutoMode: boolean
 }
 
 // Binary names to search for in PATH (brew installs as whisper-cli)
@@ -34,7 +35,8 @@ export class VoiceEngine {
     preferredLanguage: null,
     provider: 'auto',
     groqApiKey: null,
-    autoTranslate: true
+    autoTranslate: true,
+    voiceAutoMode: false
   }
 
   private configDir = join(homedir(), '.vibeflow')
@@ -206,7 +208,19 @@ export class VoiceEngine {
 
     let result: TranscriptionResult
 
-    if (provider === 'sidecar') {
+    // For non-English preferred language with Groq available, prefer Groq
+    // over sidecar — cloud Whisper handles non-English much better than
+    // quantized local models which tend to hallucinate on short clips
+    const useGroqForNonEnglish = provider === 'sidecar'
+      && this.config.preferredLanguage
+      && this.config.preferredLanguage !== 'en'
+      && this.config.preferredLanguage !== 'auto'
+      && this.config.groqApiKey
+
+    if (useGroqForNonEnglish) {
+      console.log('[VIBE:Voice] Non-English preferred language detected, using Groq instead of sidecar')
+      result = await this.transcribeGroq(audioBuffer, 'audio/webm')
+    } else if (provider === 'sidecar') {
       result = await this.transcribeSidecar(audioBuffer)
     } else if (provider === 'groq') {
       // Groq accepts WebM natively — no conversion needed
@@ -307,16 +321,33 @@ export class VoiceEngine {
     // Import dynamically to avoid circular deps at module load
     const { SidecarBridge } = await import('./sidecar-bridge.js')
 
+    const wantLang = this.config.preferredLanguage || 'auto'
+
+    // Restart sidecar if language config changed since last start
+    if (this.sidecarBridge && this.sidecarLang !== wantLang) {
+      try { await this.sidecarBridge.stop() } catch { /* ignore */ }
+      this.sidecarBridge = null
+    }
+
     if (!this.sidecarBridge) {
       this.sidecarBridge = new SidecarBridge()
       const modelPath = join(this.modelsDir, 'ggml-large-v3-turbo-q5_0.bin')
-      await this.sidecarBridge.start(modelPath, this.config.preferredLanguage || 'auto')
+      await this.sidecarBridge.start(modelPath, wantLang)
+      this.sidecarLang = wantLang
     }
 
-    return this.sidecarBridge.transcribe(audioBuffer, 'webm')
+    // Sidecar's Symphonia lacks Opus codec — convert WebM→WAV first
+    const tempWav = await this.convertToWav(audioBuffer)
+    try {
+      const wavBuffer = readFileSync(tempWav)
+      return this.sidecarBridge.transcribe(wavBuffer, 'wav')
+    } finally {
+      try { unlinkSync(tempWav) } catch { /* ignore */ }
+    }
   }
 
   private sidecarBridge: any = null
+  private sidecarLang: string | null = null
 
   /**
    * Convert WebM/Opus to 16kHz mono WAV using ffmpeg or macOS afconvert.
@@ -441,9 +472,6 @@ export class VoiceEngine {
       } else if (typeof result.text === 'string') {
         text = result.text.trim()
       }
-
-      // Clean up output json
-      try { unlinkSync(jsonPath) } catch { /* ignore */ }
 
       return {
         text,
@@ -627,17 +655,24 @@ export class VoiceEngine {
   }
 
   updateConfig(config: Partial<VoiceConfig>): void {
-    // Validate config values
-    if (config.provider !== undefined) {
-      if (!['auto', 'local', 'groq', 'sidecar'].includes(config.provider)) {
-        throw new Error('Invalid provider')
-      }
-    }
-    if (config.groqApiKey !== undefined && config.groqApiKey !== null) {
-      if (typeof config.groqApiKey !== 'string') throw new Error('API key must be a string')
+    // Validate config values — only allow known fields
+    const allowed: Record<string, (v: unknown) => boolean> = {
+      provider: (v) => typeof v === 'string' && ['auto', 'local', 'groq', 'sidecar'].includes(v),
+      groqApiKey: (v) => v === null || typeof v === 'string',
+      preferredLanguage: (v) => v === null || (typeof v === 'string' && v.length <= 10),
+      autoTranslate: (v) => typeof v === 'boolean',
+      voiceAutoMode: (v) => typeof v === 'boolean',
     }
 
-    this.config = { ...this.config, ...config }
+    const sanitized: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(config)) {
+      const validator = allowed[key]
+      if (!validator) continue // ignore unknown keys
+      if (!validator(value)) throw new Error(`Invalid value for ${key}`)
+      sanitized[key] = value
+    }
+
+    this.config = { ...this.config, ...sanitized } as VoiceConfig
     try {
       writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8')
     } catch { /* ignore save errors */ }

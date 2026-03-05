@@ -242,7 +242,7 @@ interface AgentState {
 
   // Git modal state
   gitStatus: { uncommittedCount: number; unpushedCount: number; currentBranch: string | null }
-  gitModal: 'commit' | 'push' | null
+  gitModal: 'commit' | 'push' | 'create-repo' | null
 
   // File explorer state
   fileTree: Record<string, FileEntry[]>
@@ -250,6 +250,10 @@ interface AgentState {
   selectedFile: FileContent | null
   fileViewerOpen: boolean
   fileViewerDirty: boolean
+
+  // Multi-root explorer state
+  multiRootTrees: Record<string, Record<string, FileEntry[]>> // projectPath → { dirPath → entries }
+  collapsedRoots: string[] // projectPaths that are collapsed
 
   // Voice state
   voiceConfig: (VoiceConfig & { localAvailable: boolean; modelDownloaded: boolean; sidecarAvailable?: boolean }) | null
@@ -289,6 +293,7 @@ interface AgentState {
   // Display & connectivity actions
   setUIScale: (scale: number) => void
   setGitHub: (status: Partial<GitHubStatus>) => void
+  checkGitHub: () => void
   setClaudeConnectivity: (status: Partial<ClaudeConnectivity>) => void
 
   // Approval gate actions
@@ -329,7 +334,7 @@ interface AgentState {
 
   // Git modal actions
   refreshGitStatus: () => void
-  openGitModal: (type: 'commit' | 'push') => void
+  openGitModal: (type: 'commit' | 'push' | 'create-repo') => void
   closeGitModal: () => void
 
   // Voice actions
@@ -363,6 +368,13 @@ interface AgentState {
   createFileEntry: (relativePath: string) => Promise<void>
   createDirectoryEntry: (relativePath: string) => Promise<void>
   closeFileViewer: () => void
+
+  // Multi-root explorer actions
+  loadRootTree: (projectPath: string) => Promise<void>
+  toggleRootDirectory: (projectPath: string, absoluteDirPath: string) => void
+  toggleRootCollapse: (projectPath: string) => void
+  refreshAllRoots: () => Promise<void>
+  pruneRootTree: (projectPath: string) => void
 }
 
 export const useAgentStore = create<AgentState>()((set, get) => ({
@@ -443,6 +455,10 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   selectedFile: null,
   fileViewerOpen: false,
   fileViewerDirty: false,
+
+  // Multi-root explorer defaults
+  multiRootTrees: {},
+  collapsedRoots: [],
 
   // Plan mode defaults
   planMessages: [],
@@ -953,6 +969,7 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
           window.api.cancelTask(task.id).catch(() => {})
         }
       }
+      set({ intentPendingApproval: false, architectStatus: 'idle' })
     }
     get().addActivity({ type: 'system', content: 'Cancelled by user' })
   },
@@ -1087,6 +1104,12 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     set((state) => ({ github: { ...state.github, ...status } }))
   },
 
+  checkGitHub: () => {
+    window.api.checkGitHub().then((result) => {
+      set((state) => ({ github: { ...state.github, authenticated: result.authenticated, username: result.username, remote: result.remote } }))
+    }).catch(() => {})
+  },
+
   setClaudeConnectivity: (status) => {
     set((state) => ({ claudeConnectivity: { ...state.claudeConnectivity, ...status, lastCheck: Date.now() } }))
   },
@@ -1173,9 +1196,7 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
   refreshFileChanges: () => {
     window.api.getFileChanges().then((changes) => {
-      if (changes && changes.length > 0) {
-        set({ fileChanges: changes })
-      }
+      set({ fileChanges: changes ?? [] })
     }).catch(() => { /* ignore */ })
   },
 
@@ -1210,12 +1231,19 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   },
 
   approveDangerousCommand: (id) => {
+    // Optimistically remove from pending so UI unblocks immediately
+    set((state) => ({
+      pendingDangerousCommands: state.pendingDangerousCommands.filter((c) => c.id !== id)
+    }))
     window.api.approveDangerousCommand(id).catch((err: unknown) => {
       console.error('[VIBE:Store] approveDangerousCommand error:', err)
     })
   },
 
   rejectDangerousCommand: (id) => {
+    set((state) => ({
+      pendingDangerousCommands: state.pendingDangerousCommands.filter((c) => c.id !== id)
+    }))
     window.api.rejectDangerousCommand(id).catch((err: unknown) => {
       console.error('[VIBE:Store] rejectDangerousCommand error:', err)
     })
@@ -1259,8 +1287,11 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
           fileViewerOpen: false,
           fileViewerDirty: false,
         })
-        // Refresh git status for the new project
+        // Reset module-level dedup key so new project gets its diagnosis logged
+        lastDiagnosisKey = ''
+        // Refresh git status and file changes for the new project
         get().refreshGitStatus()
+        get().refreshFileChanges()
         get().fetchProjectProfile()
         get().diagnoseActiveProject()
       }
@@ -1276,6 +1307,8 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   diagnoseActiveProject: () => {
     const activeProject = get().activeProject
     window.api.diagnoseProject().then((diagnosis) => {
+      // Bail if user switched projects while this was in-flight
+      if (get().activeProject?.path !== activeProject?.path) return
       set({ projectDiagnosis: diagnosis })
       const { git, stack, pulse, suggestions } = diagnosis
       // Dedup: skip if identical diagnosis for the same project
@@ -1428,6 +1461,72 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     set({ selectedFile: null, fileViewerOpen: false, fileViewerDirty: false })
   },
 
+  // --- Multi-root explorer actions ---
+
+  loadRootTree: async (projectPath: string) => {
+    try {
+      const entries = await window.api.listDirectoryAbsolute(projectPath)
+      set(s => ({
+        multiRootTrees: {
+          ...s.multiRootTrees,
+          [projectPath]: { ...s.multiRootTrees[projectPath], [projectPath]: entries },
+        },
+      }))
+    } catch (e) {
+      console.error('[VIBE:Store] loadRootTree error:', e)
+    }
+  },
+
+  toggleRootDirectory: (projectPath: string, absoluteDirPath: string) => {
+    const trees = get().multiRootTrees[projectPath] || {}
+    const isLoaded = absoluteDirPath in trees
+
+    if (isLoaded) {
+      // Collapse: remove this dir's children from the tree
+      set(s => {
+        const rootTree = { ...s.multiRootTrees[projectPath] }
+        delete rootTree[absoluteDirPath]
+        return {
+          multiRootTrees: { ...s.multiRootTrees, [projectPath]: rootTree },
+        }
+      })
+    } else {
+      // Expand: lazy-load children
+      window.api.listDirectoryAbsolute(absoluteDirPath).then(entries => {
+        set(s => ({
+          multiRootTrees: {
+            ...s.multiRootTrees,
+            [projectPath]: { ...s.multiRootTrees[projectPath], [absoluteDirPath]: entries },
+          },
+        }))
+      }).catch(() => {})
+    }
+  },
+
+  toggleRootCollapse: (projectPath: string) => {
+    set(s => ({
+      collapsedRoots: s.collapsedRoots.includes(projectPath)
+        ? s.collapsedRoots.filter(p => p !== projectPath)
+        : [...s.collapsedRoots, projectPath],
+    }))
+  },
+
+  refreshAllRoots: async () => {
+    const trees = get().multiRootTrees
+    const rootPaths = Object.keys(trees)
+    await Promise.all(rootPaths.map(p => get().loadRootTree(p)))
+  },
+
+  pruneRootTree: (projectPath: string) => {
+    set(s => {
+      const { [projectPath]: _, ...rest } = s.multiRootTrees
+      return {
+        multiRootTrees: rest,
+        collapsedRoots: s.collapsedRoots.filter(p => p !== projectPath),
+      }
+    })
+  },
+
   // --- Plan mode actions ---
 
   addPlanMessage: (msg) => {
@@ -1477,7 +1576,7 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   fetchVoiceConfig: async () => {
     try {
       const config = await window.api.getVoiceConfig()
-      set({ voiceConfig: config })
+      set({ voiceConfig: config, voiceAutoMode: config.voiceAutoMode ?? false })
     } catch (e) {
       console.error('Failed to fetch voice config:', e)
     }
@@ -1496,23 +1595,28 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   setVoiceRecording: (recording) => set({ voiceRecording: recording }),
   setVoiceProcessing: (processing) => set({ voiceProcessing: processing }),
   setVoiceListening: (listening) => set({ voiceListening: listening }),
-  setVoiceAutoMode: (autoMode) => set({ voiceAutoMode: autoMode }),
+  setVoiceAutoMode: (autoMode) => {
+    set({ voiceAutoMode: autoMode })
+    // Persist to disk alongside other voice config
+    window.api.updateVoiceConfig({ voiceAutoMode: autoMode }).catch(() => {})
+  },
   setVoiceLastTranslation: (t) => set({ voiceLastTranslation: t }),
 
   downloadWhisperModel: async () => {
+    const cleanup = window.api.onVoiceDownloadProgress((pct: number) => {
+      set({ whisperModelProgress: pct })
+    })
     try {
       set({ whisperModelProgress: 0 })
-      const cleanup = window.api.onVoiceDownloadProgress((pct: number) => {
-        set({ whisperModelProgress: pct })
-      })
       await window.api.downloadWhisperModel()
-      cleanup()
       set({ whisperModelProgress: null })
       const config = await window.api.getVoiceConfig()
       set({ voiceConfig: config })
     } catch (e) {
       set({ whisperModelProgress: null })
       console.error('Failed to download model:', e)
+    } finally {
+      cleanup()
     }
   },
 

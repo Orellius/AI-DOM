@@ -32,6 +32,8 @@ const api = {
   runQuickAction: (action: string) => ipcRenderer.invoke('agent:quick-action', action),
   checkConnectivity: () => ipcRenderer.invoke('agent:check-connectivity'),
   checkGitHub: () => ipcRenderer.invoke('agent:check-github'),
+  createGitHubRepo: (name: string, isPrivate: boolean) => ipcRenderer.invoke('agent:create-github-repo', name, isPrivate),
+  getPlatform: () => ipcRenderer.invoke('agent:get-platform'),
   githubLogin: () => ipcRenderer.invoke('agent:github-login'),
   diagnoseProject: () => ipcRenderer.invoke('agent:diagnose-project'),
   scaffoldProject: (cwd: string) => ipcRenderer.invoke('agent:scaffold-project', cwd),
@@ -74,6 +76,10 @@ const api = {
   updateOptimizerConfig: (categories: unknown[]) =>
     ipcRenderer.invoke('agent:update-optimizer-config', categories),
   // Git modal
+  getFileDiff: (filePath: string) => ipcRenderer.invoke('agent:get-file-diff', filePath),
+  stageFiles: (paths: string[]) => ipcRenderer.invoke('agent:stage-files', paths),
+  commitStagedFiles: (files: string[], message: string) =>
+    ipcRenderer.invoke('agent:commit-staged-files', files, message),
   getCurrentBranch: () => ipcRenderer.invoke('agent:get-current-branch'),
   getLocalBranches: () => ipcRenderer.invoke('agent:get-local-branches'),
   getUnpushedCommits: () => ipcRenderer.invoke('agent:get-unpushed-commits'),
@@ -82,6 +88,7 @@ const api = {
   commitWithMessage: (message: string) => ipcRenderer.invoke('agent:commit-with-message', message),
   pushToBranch: (branch: string) => ipcRenderer.invoke('agent:push-to-branch', branch),
   // File operations
+  listDirectoryAbsolute: (absolutePath: string) => ipcRenderer.invoke('agent:list-directory-absolute', absolutePath),
   listDirectory: (relativePath: string) => ipcRenderer.invoke('agent:list-directory', relativePath),
   readFile: (relativePath: string) => ipcRenderer.invoke('agent:read-file', relativePath),
   writeFile: (relativePath: string, content: string) => ipcRenderer.invoke('agent:write-file', relativePath, content),

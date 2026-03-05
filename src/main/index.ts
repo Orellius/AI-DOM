@@ -4,6 +4,12 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { AgentOrchestrator } from './orchestrator'
 import { registerIpcHandlers } from './ipc-handlers'
 
+// Single instance lock — prevent duplicate windows on macOS activate / HMR
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+}
+
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1600,
@@ -77,7 +83,21 @@ app.whenReady().then(() => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const w = createWindow()
+      registerIpcHandlers(orchestrator, w)
+    } else {
+      // Focus existing window instead of creating a new one
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  })
+
+  // When a second instance tries to launch, focus the existing window
+  app.on('second-instance', () => {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
   })
 })
 

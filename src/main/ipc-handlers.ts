@@ -31,6 +31,10 @@ export function registerIpcHandlers(
   orchestrator: AgentOrchestrator,
   mainWindow: BrowserWindow
 ): void {
+  // Sync fileManager root with persisted active project
+  const activePath = orchestrator.getActiveProject()
+  if (activePath) fileManager.setRoot(activePath)
+
   // Forward all orchestrator events to the renderer
   orchestrator.on('event', (event: AgentEvent) => {
     console.log('[VIBE:IPC] forwarding event to renderer:', event.type)
@@ -46,12 +50,13 @@ export function registerIpcHandlers(
 
   ipcMain.handle('agent:submit-intent', async (_event, text: unknown, options: unknown) => {
     console.log('[VIBE:IPC] agent:submit-intent received:', text)
-    if (typeof text !== 'string' || !text.trim()) {
-      console.error('[VIBE:IPC] invalid intent text:', text)
-      throw new Error('Invalid intent: must be a non-empty string')
-    }
+    const validated = validateString(text, 'intent text', 50_000)
+    // Strip dangerouslySkipPermissions — renderer should not control this
+    const safeOpts = options && typeof options === 'object'
+      ? { ...(options as Record<string, unknown>), dangerouslySkipPermissions: undefined }
+      : undefined
     try {
-      await orchestrator.submitIntent(text, options as Record<string, unknown> | undefined)
+      await orchestrator.submitIntent(validated, safeOpts as Record<string, unknown> | undefined)
       console.log('[VIBE:IPC] submitIntent completed successfully')
     } catch (err) {
       console.error('[VIBE:IPC] submitIntent threw:', err)
@@ -130,6 +135,17 @@ export function registerIpcHandlers(
     return { ...auth, remote }
   })
 
+  ipcMain.handle('agent:create-github-repo', (_event, name: unknown, isPrivate: unknown) => {
+    const validatedName = validateString(name, 'repo name', 200)
+    if (!/^[a-zA-Z0-9._-]+$/.test(validatedName)) throw new Error('Invalid repository name')
+    if (typeof isPrivate !== 'boolean') throw new Error('isPrivate must be a boolean')
+    return orchestrator.createGitHubRepo(validatedName, isPrivate)
+  })
+
+  ipcMain.handle('agent:get-platform', () => {
+    return process.platform
+  })
+
   ipcMain.handle('agent:github-login', () => {
     const { spawn: spawnProc } = require('child_process')
     const proc = spawnProc('gh', ['auth', 'login', '--web'], {
@@ -149,6 +165,24 @@ export function registerIpcHandlers(
 
   ipcMain.handle('agent:get-file-changes', () => {
     return orchestrator.getFileChanges()
+  })
+
+  ipcMain.handle('agent:get-file-diff', (_event, filePath: unknown) => {
+    const validated = validateString(filePath, 'filePath', 1000)
+    return orchestrator.getFileDiff(validated)
+  })
+
+  ipcMain.handle('agent:stage-files', (_event, paths: unknown) => {
+    if (!Array.isArray(paths) || paths.length === 0) throw new Error('paths must be a non-empty array')
+    const validated = paths.map((p, i) => validateString(p, `paths[${i}]`, 1000))
+    return orchestrator.stageFiles(validated)
+  })
+
+  ipcMain.handle('agent:commit-staged-files', (_event, files: unknown, message: unknown) => {
+    if (!Array.isArray(files) || files.length === 0) throw new Error('files must be a non-empty array')
+    const validatedFiles = files.map((f, i) => validateString(f, `files[${i}]`, 1000))
+    const validatedMessage = validateString(message, 'commit message', 500)
+    return orchestrator.commitStagedFiles(validatedFiles, validatedMessage)
   })
 
   ipcMain.handle('agent:get-current-branch', () => {
@@ -395,42 +429,48 @@ export function registerIpcHandlers(
 
   // --- File operations ---
 
+  ipcMain.handle('agent:list-directory-absolute', async (_e, absolutePath: unknown) => {
+    const validated = validateString(absolutePath, 'absolutePath', 2000)
+    if (!validated.startsWith('/')) throw new Error('Path must be absolute')
+    return FileManager.listDirectoryAbsolute(validated)
+  })
+
   ipcMain.handle('agent:list-directory', async (_e, relativePath: string) => {
-    validateString(relativePath, 'relativePath', 1000)
-    return fileManager.listDirectory(relativePath)
+    const validated = validateString(relativePath, 'relativePath', 1000)
+    return fileManager.listDirectory(validated)
   })
 
   ipcMain.handle('agent:read-file', async (_e, relativePath: string) => {
-    validateString(relativePath, 'relativePath', 1000)
-    return fileManager.readFile(relativePath)
+    const validated = validateString(relativePath, 'relativePath', 1000)
+    return fileManager.readFile(validated)
   })
 
   ipcMain.handle('agent:write-file', async (_e, relativePath: string, content: string) => {
-    validateString(relativePath, 'relativePath', 1000)
+    const validated = validateString(relativePath, 'relativePath', 1000)
     if (typeof content !== 'string') throw new Error('Content must be a string')
-    return fileManager.writeFile(relativePath, content)
+    return fileManager.writeFile(validated, content)
   })
 
   ipcMain.handle('agent:delete-file', async (_e, relativePath: string) => {
-    validateString(relativePath, 'relativePath', 1000)
-    return fileManager.deleteFile(relativePath)
+    const validated = validateString(relativePath, 'relativePath', 1000)
+    return fileManager.deleteFile(validated)
   })
 
   ipcMain.handle('agent:rename-file', async (_e, oldRelative: string, newName: string) => {
-    validateString(oldRelative, 'oldRelative', 1000)
-    validateString(newName, 'newName', 255)
-    return fileManager.renameFile(oldRelative, newName)
+    const validatedOld = validateString(oldRelative, 'oldRelative', 1000)
+    const validatedName = validateString(newName, 'newName', 255)
+    return fileManager.renameFile(validatedOld, validatedName)
   })
 
   ipcMain.handle('agent:create-file', async (_e, relativePath: string, content?: string) => {
-    validateString(relativePath, 'relativePath', 1000)
+    const validated = validateString(relativePath, 'relativePath', 1000)
     if (content !== undefined && typeof content !== 'string') throw new Error('Content must be a string')
-    return fileManager.createFile(relativePath, content)
+    return fileManager.createFile(validated, content)
   })
 
   ipcMain.handle('agent:create-directory', async (_e, relativePath: string) => {
-    validateString(relativePath, 'relativePath', 1000)
-    return fileManager.createDirectory(relativePath)
+    const validated = validateString(relativePath, 'relativePath', 1000)
+    return fileManager.createDirectory(validated)
   })
 
   // --- Voice transcription ---
@@ -439,8 +479,20 @@ export function registerIpcHandlers(
     if (typeof audioBase64 !== 'string' || audioBase64.length === 0) {
       throw new Error('Audio data required')
     }
+    // ~50MB base64 ≈ 37.5MB audio ≈ 2.5 hours at opus quality
+    if (audioBase64.length > 50_000_000) {
+      throw new Error('Audio data too large')
+    }
     const audioBuffer = Buffer.from(audioBase64, 'base64')
-    return voiceEngine.transcribe(audioBuffer)
+    console.log('[VIBE:Voice] transcribe-audio called, buffer size:', audioBuffer.length)
+    try {
+      const result = await voiceEngine.transcribe(audioBuffer)
+      console.log('[VIBE:Voice] transcription result:', JSON.stringify({ text: result.text, language: result.language, provider: result.provider, duration: result.duration }))
+      return result
+    } catch (err) {
+      console.error('[VIBE:Voice] transcription failed:', err)
+      throw err
+    }
   })
 
   ipcMain.handle('agent:get-voice-config', async () => {

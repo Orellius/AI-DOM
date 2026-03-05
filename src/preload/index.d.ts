@@ -13,6 +13,7 @@ export interface VoiceConfig {
   provider: 'auto' | 'local' | 'groq' | 'sidecar'
   groqApiKey: string | null
   autoTranslate: boolean
+  voiceAutoMode: boolean
 }
 
 interface AgentTask {
@@ -190,6 +191,8 @@ interface ApiInterface {
   runQuickAction: (action: string) => Promise<{ success: boolean; output: string }>
   checkConnectivity: () => Promise<{ connected: boolean; version: string | null }>
   checkGitHub: () => Promise<{ authenticated: boolean; username: string | null; remote: string | null }>
+  createGitHubRepo: (name: string, isPrivate: boolean) => Promise<{ success: boolean; output: string }>
+  getPlatform: () => Promise<string>
   githubLogin: () => Promise<{ started: boolean }>
   diagnoseProject: () => Promise<ProjectDiagnosis>
   scaffoldProject: (cwd: string) => Promise<{ success: boolean; output: string }>
@@ -227,6 +230,9 @@ interface ApiInterface {
   getOptimizerConfig: () => Promise<OptimizerConfig>
   updateOptimizerConfig: (categories: CategoryConfig[]) => Promise<void>
   // Git modal
+  getFileDiff: (filePath: string) => Promise<string>
+  stageFiles: (paths: string[]) => Promise<{ success: boolean; output: string }>
+  commitStagedFiles: (files: string[], message: string) => Promise<{ success: boolean; output: string }>
   getCurrentBranch: () => Promise<string | null>
   getLocalBranches: () => Promise<string[]>
   getUnpushedCommits: () => Promise<Array<{ hash: string; message: string }>>
@@ -235,6 +241,7 @@ interface ApiInterface {
   commitWithMessage: (message: string) => Promise<{ success: boolean; output: string }>
   pushToBranch: (branch: string) => Promise<{ success: boolean; output: string }>
   // File operations
+  listDirectoryAbsolute(absolutePath: string): Promise<FileEntry[]>
   listDirectory(relativePath: string): Promise<FileEntry[]>
   readFile(relativePath: string): Promise<FileContent>
   writeFile(relativePath: string, content: string): Promise<void>

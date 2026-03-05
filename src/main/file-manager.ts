@@ -147,7 +147,7 @@ export class FileManager {
     const dir = dirname(oldAbs)
     const newAbs = join(dir, newName)
     // Validate new path is still within root
-    if (!newAbs.startsWith(this.projectRoot!)) {
+    if (!newAbs.startsWith(this.projectRoot! + '/')) {
       throw new Error('Path traversal detected')
     }
     renameSync(oldAbs, newAbs)
@@ -180,7 +180,7 @@ export class FileManager {
     if (relativePath.includes('..')) throw new Error('Path traversal not allowed')
 
     const absPath = resolve(this.projectRoot, relativePath)
-    if (!absPath.startsWith(this.projectRoot)) {
+    if (!absPath.startsWith(this.projectRoot + '/')) {
       throw new Error('Path traversal detected')
     }
 
@@ -189,6 +189,44 @@ export class FileManager {
     }
 
     return absPath
+  }
+
+  /**
+   * Read-only listing of any absolute directory path.
+   * Used by multi-root explorer — does NOT touch projectRoot or validatePath.
+   * Returns entries with absolute paths in the relativePath field to avoid
+   * namespace collisions between different roots.
+   */
+  static listDirectoryAbsolute(absolutePath: string): FileEntry[] {
+    if (!absolutePath.startsWith('/')) throw new Error('Path must be absolute')
+
+    const entries = readdirSync(absolutePath, { withFileTypes: true })
+    const result: FileEntry[] = []
+
+    for (const entry of entries) {
+      if (FileManager.SKIP_DIRS.has(entry.name)) continue
+      if (entry.name.startsWith('.') && entry.name !== '.env' && entry.name !== '.gitignore' && entry.name !== '.vibe') continue
+
+      const fullPath = join(absolutePath, entry.name)
+      try {
+        const stat = statSync(fullPath)
+        result.push({
+          name: entry.name,
+          path: fullPath,
+          relativePath: fullPath, // absolute path as key — no namespace collisions
+          isDirectory: entry.isDirectory(),
+          size: entry.isDirectory() ? 0 : stat.size,
+          modifiedAt: stat.mtimeMs,
+        })
+      } catch {
+        // Skip files we can't stat
+      }
+    }
+
+    return result.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
   }
 
   private inferLanguage(filename: string): string {

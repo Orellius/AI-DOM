@@ -1,0 +1,316 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,400&display=swap');
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+/* ═══════════════════════════════════════════════════
+   VIBΣ — Phosphor Terminal Design System
+   ═══════════════════════════════════════════════════ */
+
+@theme {
+  --color-base: #06060a;
+  --color-surface: #0c0c10;
+  --color-surface-light: #141418;
+  --color-surface-raised: #1a1a20;
+  --color-border: #1e1e26;
+  --color-border-light: #2a2a34;
+  --color-accent: #00e89d;
+  --color-accent-dim: #00c080;
+  --color-amber: #ffb020;
+  --color-red: #ff4060;
+  --color-cyan: #00d4ff;
+  --color-text: #d8dae0;
+  --color-text-muted: #606878;
+  --color-text-dim: #363a44;
+  --font-mono: 'Geist Mono', 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Space Grotesk', 'DM Sans', sans-serif;
+}
+
+/* ── UI Scale (adjustable from Settings > Display) ── */
+:root {
+  --ui-scale: 1;
+}
+
+/* ── Base ── */
+body {
+  background-color: var(--color-base);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  margin: 0;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Atmospheric Background ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 100%, rgba(0, 232, 157, 0.015) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 50% at 80% 0%, rgba(0, 212, 255, 0.01) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Scan Lines (subtle CRT texture) ── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── macOS Titlebar ── */
+.draggable {
+  -webkit-app-region: drag;
+}
+.no-drag,
+.draggable button,
+.draggable a,
+.draggable input {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Panel System ── */
+.panel {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 14px;
+  position: relative;
+  overflow: hidden;
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.01) 0%, transparent 40%);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* Panel accents */
+.glow-accent {
+  border-color: rgba(0, 232, 157, 0.12);
+  box-shadow: 0 0 40px -20px rgba(0, 232, 157, 0.08);
+}
+.glow-cmd {
+  border-color: rgba(0, 232, 157, 0.08);
+  background: linear-gradient(0deg, rgba(0, 232, 157, 0.02) 0%, var(--color-surface) 60%);
+}
+
+/* ── Activity Stream ── */
+.activity-stream {
+  background: var(--color-base);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  position: relative;
+}
+.activity-stream::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(180deg, var(--color-base) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 2;
+  border-radius: 12px 12px 0 0;
+}
+
+/* ── Labels (tracking-expanded uppercase) ── */
+.label {
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-scale) * 11px);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* ── Chips / Badges ── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-scale) * 12px);
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-light);
+  color: var(--color-text-muted);
+  transition: all 0.15s ease;
+}
+.chip:hover {
+  border-color: var(--color-border-light);
+  color: var(--color-text);
+}
+.chip-active {
+  border-color: rgba(0, 232, 157, 0.2);
+  background: rgba(0, 232, 157, 0.06);
+  color: var(--color-accent);
+}
+.chip-danger {
+  border-color: rgba(255, 64, 96, 0.25);
+  background: rgba(255, 64, 96, 0.06);
+  color: var(--color-red);
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-scale) * 13px);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-light);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn:hover {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border-light);
+  color: var(--color-text);
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.btn:disabled:hover {
+  background: var(--color-surface-light);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+.btn-accent {
+  border-color: rgba(0, 232, 157, 0.2);
+  background: rgba(0, 232, 157, 0.08);
+  color: var(--color-accent);
+}
+.btn-accent:hover {
+  background: rgba(0, 232, 157, 0.14);
+  border-color: rgba(0, 232, 157, 0.3);
+}
+.btn-danger {
+  border-color: rgba(255, 64, 96, 0.2);
+  background: rgba(255, 64, 96, 0.06);
+  color: var(--color-red);
+}
+.btn-danger:hover {
+  background: rgba(255, 64, 96, 0.12);
+  border-color: rgba(255, 64, 96, 0.3);
+}
+
+/* ── Input ── */
+.input {
+  width: 100%;
+  background: var(--color-base);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-scale) * 14px);
+  color: var(--color-text);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.input::placeholder {
+  color: var(--color-text-dim);
+}
+.input:focus {
+  border-color: rgba(0, 232, 157, 0.25);
+}
+
+/* ── Animations ── */
+@keyframes dash {
+  to { stroke-dashoffset: -10; }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 232, 157, 0); }
+  50% { box-shadow: 0 0 12px -2px rgba(0, 232, 157, 0.15); }
+}
+
+.animate-breathe { animation: breathe 2s ease-in-out infinite; }
+.animate-slide-up { animation: slideUp 0.3s ease-out forwards; }
+.animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
+.animate-pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
+
+/* Stagger children */
+.stagger-children > * {
+  animation: slideUp 0.25s ease-out forwards;
+  opacity: 0;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.09s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.12s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.15s; }
+
+/* ── Status Dots ── */
+.dot { width: calc(var(--ui-scale) * 8px); height: calc(var(--ui-scale) * 8px); border-radius: 50%; flex-shrink: 0; }
+.dot-idle { background: var(--color-text-dim); }
+.dot-thinking { background: var(--color-amber); animation: breathe 1.2s ease-in-out infinite; }
+.dot-running { background: var(--color-accent); animation: breathe 1s ease-in-out infinite; }
+.dot-completed { background: var(--color-accent); }
+.dot-failed { background: var(--color-red); }
+
+/* ── React Flow ── */
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+.react-flow__edge-path {
+  stroke: var(--color-border-light) !important;
+  stroke-width: 1.5 !important;
+}
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: var(--color-accent-dim) !important;
+  stroke-dasharray: 5;
+  animation: dash 0.5s linear infinite;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-border-light); }
+
+/* ── Selection ── */
+::selection {
+  background: rgba(0, 232, 157, 0.2);
+  color: white;
+}

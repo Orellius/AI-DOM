@@ -16,7 +16,8 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#0c0c0c',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: true
+      sandbox: true,
+      webviewTag: true
     }
   })
 

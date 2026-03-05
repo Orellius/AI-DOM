@@ -12,6 +12,7 @@ import {
   PanelLeftOpen,
   Sliders,
   FolderGit2,
+  MonitorPlay,
 } from 'lucide-react'
 import { useAgentStore } from './stores/agentStore'
 import { useAgentEvents } from './hooks/useAgentEvents'
@@ -30,12 +31,15 @@ import { ChatPanel } from './components/ChatPanel'
 import { ModelOptimizer } from './components/ModelOptimizer'
 import { GitModal } from './components/GitModal'
 import { UmbrellaSync } from './components/UmbrellaSync'
+import { LiveBrowser } from './components/LiveBrowser'
+import { FileViewer } from './components/FileViewer'
 
 const NAV_ITEMS = [
   { id: 'stream', label: 'Stream', icon: Activity },
   { id: 'graph', label: 'Graph', icon: GitGraph },
   { id: 'changes', label: 'Changes', icon: FileCode2 },
   { id: 'server', label: 'Server', icon: Server },
+  { id: 'preview', label: 'Preview', icon: MonitorPlay },
   { id: 'config', label: 'Config', icon: Settings },
   { id: 'optimizer', label: 'Optimizer', icon: Sliders },
   { id: 'profile', label: 'Profile', icon: Sparkles },
@@ -53,6 +57,7 @@ function App(): JSX.Element {
   const gitModal = useAgentStore((s) => s.gitModal)
   const activeProject = useAgentStore((s) => s.activeProject)
   const refreshGitStatus = useAgentStore((s) => s.refreshGitStatus)
+  const previewUrl = useAgentStore((s) => s.previewUrl)
   const [activeTab, setActiveTab] = useState<NavTab>('stream')
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [onboardingDone, setOnboardingDone] = useState(() => localStorage.getItem('vibeflow:onboarding-complete') === 'true')
@@ -93,7 +98,10 @@ function App(): JSX.Element {
       window.api.getProjects().then((projects) => {
         const match = projects.find((p) => p.path === activePath)
         if (match) {
-          useAgentStore.getState().setActiveProject(match)
+          const store = useAgentStore.getState()
+          store.setActiveProject(match)
+          store.fetchProjectProfile()
+          store.diagnoseActiveProject()
         }
       }).catch(() => {})
     }).catch(() => {})
@@ -160,6 +168,12 @@ function App(): JSX.Element {
             <DevServerPanel />
           </div>
         )
+      case 'preview':
+        return (
+          <div className="panel h-full overflow-hidden">
+            <LiveBrowser />
+          </div>
+        )
       case 'config':
         return (
           <div className="panel h-full overflow-hidden">
@@ -219,7 +233,7 @@ function App(): JSX.Element {
         >
           {/* Nav items */}
           <div className="flex-1 flex flex-col gap-0.5 py-2 px-1.5 overflow-hidden">
-            {NAV_ITEMS.map((item) => {
+            {NAV_ITEMS.filter((item) => item.id !== 'preview' || previewUrl).map((item) => {
               const Icon = item.icon
               const isActive = activeTab === item.id && mode === 'terminal'
               return (
@@ -357,7 +371,7 @@ function App(): JSX.Element {
         <div
           className="shrink-0 flex flex-col border-r overflow-hidden"
           style={{
-            width: '180px',
+            width: '220px',
             borderColor: 'var(--color-border)',
             background: 'var(--color-surface)',
             padding: '10px 8px',
@@ -371,8 +385,9 @@ function App(): JSX.Element {
           {activeProject ? (
             <>
               {/* Main content — full width, full height */}
-              <div className="flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-hidden relative">
                 {renderTabContent()}
+                <FileViewer />
               </div>
 
               {/* Bottom: Actions + Command */}

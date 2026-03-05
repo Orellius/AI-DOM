@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Play, Square, Terminal } from 'lucide-react'
+import { Play, Square, Terminal, MonitorPlay } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
 
@@ -36,6 +36,7 @@ export function DevServerPanel(): JSX.Element {
   const devServer = useAgentStore((s) => s.devServer)
   const setDevServer = useAgentStore((s) => s.setDevServer)
   const addDevServerOutput = useAgentStore((s) => s.addDevServerOutput)
+  const openPreview = useAgentStore((s) => s.openPreview)
 
   const [command, setCommand] = useState(devServer.command ?? '')
   const outputRef = useRef<HTMLDivElement>(null)
@@ -117,6 +118,18 @@ export function DevServerPanel(): JSX.Element {
           >
             {devServer.url}
           </a>
+          <button
+            onClick={() => openPreview(devServer.url!)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: scaled(4),
+              padding: `${scaled(2)} ${scaled(8)}`,
+              background: '#7c3aed', color: '#fff', border: 'none',
+              borderRadius: scaled(4), cursor: 'pointer', fontSize: scaled(10),
+            }}
+          >
+            <MonitorPlay size={10} />
+            Preview
+          </button>
         </div>
       )}
 

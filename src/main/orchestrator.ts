@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events'
 import { ChildProcess, spawn, execFileSync, spawnSync } from 'child_process'
-import { readFileSync, statSync } from 'fs'
+import { readFileSync, statSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { ClaudeCli } from './claude-cli'
@@ -73,6 +73,32 @@ export type AgentEvent =
   | { type: 'dangerous-command:approved'; id: string; command: string }
   | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
 
+export interface ProjectDiagnosis {
+  git: {
+    hasGit: boolean
+    branch: string | null
+    uncommittedCount: number
+    unpushedCount: number
+    lastCommitMessage: string | null
+  }
+  stack: {
+    language: string
+    framework: string | null
+    packageManager: string | null
+    devCommand: string | null
+    buildCommand: string | null
+    testCommand: string | null
+  }
+  pulse: {
+    entryFiles: string[]
+    diagnosticCount: number
+    hasClaudeMd: boolean
+    hasPackageJson: boolean
+    isInitialized: boolean
+  }
+  suggestions: string[]
+}
+
 const DEFAULT_CONCURRENCY = 3
 const MAX_INTENT_LENGTH = 10_000
 const MAX_TASKS_PER_INTENT = 10
@@ -129,6 +155,8 @@ export class AgentOrchestrator extends EventEmitter {
     this.sessionManager = new SessionManager()
     this.commandGuard = new CommandGuard()
     this.workspaceConfig = new WorkspaceConfigManager()
+    // Auto-detect projects under cwd on first launch
+    this.workspaceConfig.autoDetectFromCwd(this.getCwd())
     this.lspBridge = new LspBridge(this.getCwd())
     this.contextFilter = ContextFilter.load(this.getCwd())
 
@@ -806,7 +834,7 @@ export class AgentOrchestrator extends EventEmitter {
 
   addProject(absolutePath: string): { success: boolean; projects: ProjectEntry[] } {
     try {
-      const projects = this.workspaceConfig.addProject(absolutePath)
+      const projects = this.workspaceConfig.addProjectSmart(absolutePath)
       return { success: true, projects }
     } catch {
       return { success: false, projects: this.workspaceConfig.getProjects() }
@@ -1015,6 +1043,87 @@ export class AgentOrchestrator extends EventEmitter {
       this.emitEvent({ type: 'task:failed', task, error: errMsg })
       this.scheduleNext()
     })
+  }
+
+  // --- Diagnosis Engine ---
+
+  diagnoseProject(): ProjectDiagnosis {
+    const cwd = this.getCwd()
+    const profile = profileProject(cwd)
+    const gitStatus = this.getGitStatus()
+    const lspStatus = this.getLspStatus()
+    const lastCommitMessage = this.getLastCommitMessage(cwd)
+
+    const hasClaudeMd = existsSync(join(cwd, 'CLAUDE.md'))
+    const hasPackageJson = existsSync(join(cwd, 'package.json'))
+    const isInitialized = profile.hasGit || hasPackageJson
+
+    const suggestions: string[] = []
+    if (profile.devCommand) suggestions.push(`Run dev server: ${profile.devCommand}`)
+    if (!profile.hasGit) suggestions.push('Initialize git repository')
+    if (!hasPackageJson && profile.language === 'unknown') suggestions.push('Create package.json')
+    if (gitStatus.uncommittedCount > 0) suggestions.push(`Commit ${gitStatus.uncommittedCount} pending changes`)
+    if (gitStatus.unpushedCount > 0) suggestions.push(`Push ${gitStatus.unpushedCount} unpushed commits`)
+    if (lspStatus.diagnosticCount > 0) suggestions.push(`Fix ${lspStatus.diagnosticCount} diagnostics`)
+    if (!hasClaudeMd) suggestions.push('Add CLAUDE.md for project context')
+
+    return {
+      git: {
+        hasGit: profile.hasGit,
+        branch: profile.branch,
+        uncommittedCount: gitStatus.uncommittedCount,
+        unpushedCount: gitStatus.unpushedCount,
+        lastCommitMessage,
+      },
+      stack: {
+        language: profile.language,
+        framework: profile.framework,
+        packageManager: profile.packageManager,
+        devCommand: profile.devCommand,
+        buildCommand: profile.buildCommand,
+        testCommand: profile.testCommand,
+      },
+      pulse: {
+        entryFiles: profile.entryFiles,
+        diagnosticCount: lspStatus.diagnosticCount,
+        hasClaudeMd,
+        hasPackageJson,
+        isInitialized,
+      },
+      suggestions,
+    }
+  }
+
+  private getLastCommitMessage(cwd: string): string | null {
+    try {
+      return execFileSync('git', ['log', '-1', '--pretty=%s'], { cwd, stdio: 'pipe' }).toString().trim() || null
+    } catch {
+      return null
+    }
+  }
+
+  scaffoldProject(cwd: string): { success: boolean; output: string } {
+    try {
+      const parts: string[] = []
+
+      if (!existsSync(join(cwd, '.git'))) {
+        execFileSync('git', ['init'], { cwd, stdio: 'pipe' })
+        parts.push('Initialized git repository')
+      }
+
+      if (!existsSync(join(cwd, 'package.json'))) {
+        const name = cwd.split('/').pop() || 'project'
+        const pkg = { name, version: '0.0.1', private: true }
+        writeFileSync(join(cwd, 'package.json'), JSON.stringify(pkg, null, 2), 'utf8')
+        parts.push('Created package.json')
+      }
+
+      this.refreshIntelligence()
+      return { success: true, output: parts.join(', ') || 'Already initialized' }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { success: false, output: msg.slice(-500) }
+    }
   }
 
   destroy(): void {

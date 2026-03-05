@@ -4,6 +4,7 @@ import { useAgentStore } from '../stores/agentStore'
 import type { Permissions } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
 import { ThinkingIndicator } from './ThinkingIndicator'
+import { VoiceInput } from './VoiceInput'
 
 const PERMISSION_CHIPS: Array<{
   key: keyof Permissions
@@ -127,6 +128,7 @@ export function CommandBar(): JSX.Element {
             </>
           )}
         </div>
+        <VoiceInput onTranscript={(text) => setInput(prev => prev + (prev ? ' ' : '') + text)} />
       </form>
 
       {/* Mode chips + Permission chips — same flex structure as input row for alignment */}

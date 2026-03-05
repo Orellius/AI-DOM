@@ -33,6 +33,8 @@ const api = {
   checkConnectivity: () => ipcRenderer.invoke('agent:check-connectivity'),
   checkGitHub: () => ipcRenderer.invoke('agent:check-github'),
   githubLogin: () => ipcRenderer.invoke('agent:github-login'),
+  diagnoseProject: () => ipcRenderer.invoke('agent:diagnose-project'),
+  scaffoldProject: (cwd: string) => ipcRenderer.invoke('agent:scaffold-project', cwd),
   switchProject: (path: string) => ipcRenderer.invoke('agent:switch-project', path),
   getActiveProject: () => ipcRenderer.invoke('agent:get-active-project'),
   addProject: () => ipcRenderer.invoke('agent:add-project'),
@@ -71,6 +73,26 @@ const api = {
   generateCommitMessage: () => ipcRenderer.invoke('agent:generate-commit-message'),
   commitWithMessage: (message: string) => ipcRenderer.invoke('agent:commit-with-message', message),
   pushToBranch: (branch: string) => ipcRenderer.invoke('agent:push-to-branch', branch),
+  // File operations
+  listDirectory: (relativePath: string) => ipcRenderer.invoke('agent:list-directory', relativePath),
+  readFile: (relativePath: string) => ipcRenderer.invoke('agent:read-file', relativePath),
+  writeFile: (relativePath: string, content: string) => ipcRenderer.invoke('agent:write-file', relativePath, content),
+  deleteFile: (relativePath: string) => ipcRenderer.invoke('agent:delete-file', relativePath),
+  renameFile: (oldRelative: string, newName: string) => ipcRenderer.invoke('agent:rename-file', oldRelative, newName),
+  createFile: (relativePath: string, content?: string) => ipcRenderer.invoke('agent:create-file', relativePath, content),
+  createDirectory: (relativePath: string) => ipcRenderer.invoke('agent:create-directory', relativePath),
+  // Voice
+  transcribeAudio: (audioBase64: string) => ipcRenderer.invoke('agent:transcribe-audio', audioBase64),
+  getVoiceConfig: () => ipcRenderer.invoke('agent:get-voice-config'),
+  updateVoiceConfig: (config: any) => ipcRenderer.invoke('agent:update-voice-config', config),
+  downloadWhisperModel: () => ipcRenderer.invoke('agent:download-whisper-model'),
+  onVoiceDownloadProgress: (callback: (pct: number) => void) => {
+    const handler = (_event: any, pct: number) => callback(pct)
+    ipcRenderer.on('voice:download-progress', handler)
+    return () => ipcRenderer.removeListener('voice:download-progress', handler)
+  },
+  translateText: (text: string, sourceLang: string) =>
+    ipcRenderer.invoke('agent:translate-text', text, sourceLang),
 }
 
 if (process.contextIsolated) {

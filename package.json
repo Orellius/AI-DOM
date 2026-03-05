@@ -10,7 +10,8 @@
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:sidecar": "cd src-sidecar && cargo build --release && mkdir -p ../resources/bin && cp target/release/vibe-audio ../resources/bin/"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",

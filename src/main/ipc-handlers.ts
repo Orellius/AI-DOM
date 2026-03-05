@@ -3,6 +3,11 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { AgentOrchestrator, AgentEvent } from './orchestrator'
 import { ClaudeCli } from './claude-cli'
+import { FileManager } from './file-manager.js'
+import { VoiceEngine } from './voice-engine.js'
+
+const fileManager = new FileManager()
+const voiceEngine = new VoiceEngine()
 
 // --- Input validation helpers ---
 
@@ -203,10 +208,21 @@ export function registerIpcHandlers(
     return orchestrator.runQuickAction(validated)
   })
 
+  ipcMain.handle('agent:diagnose-project', () => {
+    return orchestrator.diagnoseProject()
+  })
+
+  ipcMain.handle('agent:scaffold-project', (_event, cwd: unknown) => {
+    if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('Invalid path')
+    if (!cwd.startsWith('/')) throw new Error('Path must be absolute')
+    return orchestrator.scaffoldProject(cwd)
+  })
+
   ipcMain.handle('agent:switch-project', (_event, absolutePath: unknown) => {
     if (typeof absolutePath !== 'string' || !absolutePath.trim()) throw new Error('Invalid project path')
     // Must be an absolute path
     if (!absolutePath.startsWith('/')) throw new Error('Path must be absolute')
+    fileManager.setRoot(absolutePath)
     return orchestrator.switchProject(absolutePath)
   })
 
@@ -339,5 +355,82 @@ export function registerIpcHandlers(
   ipcMain.handle('agent:update-optimizer-config', (_event, categories: unknown) => {
     if (!Array.isArray(categories)) throw new Error('Categories must be an array')
     orchestrator.updateOptimizerConfig(categories)
+  })
+
+  // --- File operations ---
+
+  ipcMain.handle('agent:list-directory', async (_e, relativePath: string) => {
+    validateString(relativePath, 'relativePath', 1000)
+    return fileManager.listDirectory(relativePath)
+  })
+
+  ipcMain.handle('agent:read-file', async (_e, relativePath: string) => {
+    validateString(relativePath, 'relativePath', 1000)
+    return fileManager.readFile(relativePath)
+  })
+
+  ipcMain.handle('agent:write-file', async (_e, relativePath: string, content: string) => {
+    validateString(relativePath, 'relativePath', 1000)
+    if (typeof content !== 'string') throw new Error('Content must be a string')
+    return fileManager.writeFile(relativePath, content)
+  })
+
+  ipcMain.handle('agent:delete-file', async (_e, relativePath: string) => {
+    validateString(relativePath, 'relativePath', 1000)
+    return fileManager.deleteFile(relativePath)
+  })
+
+  ipcMain.handle('agent:rename-file', async (_e, oldRelative: string, newName: string) => {
+    validateString(oldRelative, 'oldRelative', 1000)
+    validateString(newName, 'newName', 255)
+    return fileManager.renameFile(oldRelative, newName)
+  })
+
+  ipcMain.handle('agent:create-file', async (_e, relativePath: string, content?: string) => {
+    validateString(relativePath, 'relativePath', 1000)
+    if (content !== undefined && typeof content !== 'string') throw new Error('Content must be a string')
+    return fileManager.createFile(relativePath, content)
+  })
+
+  ipcMain.handle('agent:create-directory', async (_e, relativePath: string) => {
+    validateString(relativePath, 'relativePath', 1000)
+    return fileManager.createDirectory(relativePath)
+  })
+
+  // --- Voice transcription ---
+
+  ipcMain.handle('agent:transcribe-audio', async (_e, audioBase64: unknown) => {
+    if (typeof audioBase64 !== 'string' || audioBase64.length === 0) {
+      throw new Error('Audio data required')
+    }
+    const audioBuffer = Buffer.from(audioBase64, 'base64')
+    return voiceEngine.transcribe(audioBuffer)
+  })
+
+  ipcMain.handle('agent:get-voice-config', async () => {
+    const config = voiceEngine.getConfig()
+    const local = voiceEngine.checkLocalAvailability()
+    const sidecarAvailable = voiceEngine.checkSidecarAvailability()
+    return { ...config, localAvailable: local.available, modelDownloaded: local.modelDownloaded, binaryPath: local.binaryPath, sidecarAvailable }
+  })
+
+  ipcMain.handle('agent:update-voice-config', async (_e, config: unknown) => {
+    if (typeof config !== 'object' || config === null) throw new Error('Config must be an object')
+    voiceEngine.updateConfig(config as Record<string, unknown>)
+  })
+
+  ipcMain.handle('agent:translate-text', async (_e, text: unknown, sourceLang: unknown) => {
+    const validatedText = validateString(text, 'text', 50_000)
+    const validatedLang = validateString(sourceLang, 'sourceLang', 10)
+    const result = await voiceEngine.translateToEnglish(validatedText, validatedLang)
+    return { translated: result.translated }
+  })
+
+  ipcMain.handle('agent:download-whisper-model', async () => {
+    await voiceEngine.downloadModel((pct) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('voice:download-progress', pct)
+      }
+    })
   })
 }

@@ -3,6 +3,7 @@ import type { Node, Edge } from '@xyflow/react'
 import { detectBuildIntent } from '../utils/intentDetection'
 import { getTierLimits } from '../utils/tierLimits'
 import type { TierLimits } from '../utils/tierLimits'
+import type { FileEntry, FileContent, VoiceConfig } from '../../../preload/index.d'
 
 // --- Shared types (must match orchestrator AgentEvent) ---
 
@@ -223,9 +224,37 @@ interface AgentState {
   // Active project (null = no project selected)
   activeProject: { name: string; path: string; branch: string } | null
 
+  // Project diagnosis (aggregated health data)
+  projectDiagnosis: {
+    git: { hasGit: boolean; branch: string | null; uncommittedCount: number; unpushedCount: number; lastCommitMessage: string | null }
+    stack: { language: string; framework: string | null; packageManager: string | null; devCommand: string | null; buildCommand: string | null; testCommand: string | null }
+    pulse: { entryFiles: string[]; diagnosticCount: number; hasClaudeMd: boolean; hasPackageJson: boolean; isInitialized: boolean }
+    suggestions: string[]
+  } | null
+
+  // Live browser preview
+  previewUrl: string | null
+  previewVisible: boolean
+
   // Git modal state
   gitStatus: { uncommittedCount: number; unpushedCount: number; currentBranch: string | null }
   gitModal: 'commit' | 'push' | null
+
+  // File explorer state
+  fileTree: Record<string, FileEntry[]>
+  expandedDirs: string[]
+  selectedFile: FileContent | null
+  fileViewerOpen: boolean
+  fileViewerDirty: boolean
+
+  // Voice state
+  voiceConfig: (VoiceConfig & { localAvailable: boolean; modelDownloaded: boolean; sidecarAvailable?: boolean }) | null
+  voiceRecording: boolean
+  voiceProcessing: boolean
+  voiceListening: boolean
+  voiceAutoMode: boolean
+  voiceLastTranslation: { from: string; to: string; original: string } | null
+  whisperModelProgress: number | null
 
   // Existing actions
   handleEvent: (event: AgentEvent) => void
@@ -282,11 +311,37 @@ interface AgentState {
   // Project actions
   switchProject: (project: { name: string; path: string; branch: string }) => void
   setActiveProject: (project: { name: string; path: string; branch: string } | null) => void
+  diagnoseActiveProject: () => void
+
+  // Preview actions
+  openPreview: (url: string) => void
+  closePreview: () => void
 
   // Git modal actions
   refreshGitStatus: () => void
   openGitModal: (type: 'commit' | 'push') => void
   closeGitModal: () => void
+
+  // Voice actions
+  fetchVoiceConfig: () => Promise<void>
+  updateVoiceConfig: (config: Partial<VoiceConfig>) => Promise<void>
+  setVoiceRecording: (recording: boolean) => void
+  setVoiceProcessing: (processing: boolean) => void
+  setVoiceListening: (listening: boolean) => void
+  setVoiceAutoMode: (autoMode: boolean) => void
+  setVoiceLastTranslation: (t: { from: string; to: string; original: string } | null) => void
+  downloadWhisperModel: () => Promise<void>
+
+  // File explorer actions
+  loadDirectory: (relativePath: string) => Promise<void>
+  toggleDirectory: (relativePath: string) => void
+  openFile: (relativePath: string) => Promise<void>
+  saveFile: (relativePath: string, content: string) => Promise<void>
+  deleteFileEntry: (relativePath: string) => Promise<void>
+  renameFileEntry: (oldPath: string, newName: string) => Promise<void>
+  createFileEntry: (relativePath: string) => Promise<void>
+  createDirectoryEntry: (relativePath: string) => Promise<void>
+  closeFileViewer: () => void
 }
 
 export const useAgentStore = create<AgentState>()((set, get) => ({
@@ -350,9 +405,32 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   // Active project default
   activeProject: null,
 
+  // Project diagnosis default
+  projectDiagnosis: null,
+
+  // Preview defaults
+  previewUrl: null,
+  previewVisible: false,
+
   // Git modal defaults
   gitStatus: { uncommittedCount: 0, unpushedCount: 0, currentBranch: null },
   gitModal: null,
+
+  // File explorer defaults
+  fileTree: {},
+  expandedDirs: [],
+  selectedFile: null,
+  fileViewerOpen: false,
+  fileViewerDirty: false,
+
+  // Voice defaults
+  voiceConfig: null,
+  voiceRecording: false,
+  voiceProcessing: false,
+  voiceListening: false,
+  voiceAutoMode: false,
+  voiceLastTranslation: null,
+  whisperModelProgress: null,
 
   handleEvent: (event) => {
     console.log('[VIBE:Store] handleEvent:', event.type, event)
@@ -455,6 +533,13 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
           }
         } else if (event.content) {
           addActivity({ type: 'text', taskId: event.taskId, content: event.content })
+        }
+        // Parse for localhost URLs in output
+        if (event.content) {
+          const localhostMatch = event.content.match(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\S*/)
+          if (localhostMatch && !get().previewUrl) {
+            set({ previewUrl: localhostMatch[0] })
+          }
         }
         break
 
@@ -1014,6 +1099,11 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         output: [...state.devServer.output.slice(-200), line] // cap at 200 lines
       }
     }))
+    // Parse for localhost URLs in dev server output
+    const localhostMatch = line.match(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\S*/)
+    if (localhostMatch && !get().previewUrl) {
+      set({ previewUrl: localhostMatch[0] })
+    }
   },
 
   refreshFileChanges: () => {
@@ -1087,18 +1177,27 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
             contextWindow: 0, costUsd: 0, model: '',
           },
           projectProfile: null,
+          projectDiagnosis: null,
           gitStatus: { uncommittedCount: 0, unpushedCount: 0, currentBranch: null },
           devServer: { running: false, url: null, output: [], command: null },
+          previewUrl: null,
+          previewVisible: false,
           pendingDangerousCommands: [],
           architectStatus: 'idle',
           intentPendingApproval: false,
           gitModal: null,
           conversationHistory: [],
           currentConversationId: null,
+          fileTree: {},
+          expandedDirs: [],
+          selectedFile: null,
+          fileViewerOpen: false,
+          fileViewerDirty: false,
         })
         // Refresh git status for the new project
         get().refreshGitStatus()
         get().fetchProjectProfile()
+        get().diagnoseActiveProject()
       }
     }).catch((err: unknown) => {
       console.error('[VIBE:Store] switchProject error:', err)
@@ -1107,6 +1206,30 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
   setActiveProject: (project) => {
     set({ activeProject: project })
+  },
+
+  diagnoseActiveProject: () => {
+    window.api.diagnoseProject().then((diagnosis) => {
+      set({ projectDiagnosis: diagnosis })
+      const { addActivity } = get()
+      const { git, stack, pulse, suggestions } = diagnosis
+      const gitLine = `Git: ${git.branch || 'no branch'}${git.uncommittedCount ? ` | ${git.uncommittedCount} uncommitted` : ''}${git.unpushedCount ? ` | ${git.unpushedCount} unpushed` : ''}${git.lastCommitMessage ? ` | "${git.lastCommitMessage}"` : ''}`
+      const stackLine = `Stack: ${stack.language}${stack.framework ? ` / ${stack.framework}` : ''}${stack.packageManager ? ` (${stack.packageManager})` : ''}`
+      const pulseLine = `Pulse: ${pulse.entryFiles.length} entry files${pulse.diagnosticCount ? ` | ${pulse.diagnosticCount} diagnostics` : ''}`
+      const suggestLine = suggestions.length > 0 ? `Suggestions: ${suggestions.join(' | ')}` : ''
+      addActivity({ type: 'system', content: [gitLine, stackLine, pulseLine, suggestLine].filter(Boolean).join('\n') })
+    }).catch(() => { /* ignore */ })
+  },
+
+  // --- Preview actions ---
+
+  openPreview: (url) => {
+    if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/.test(url)) return
+    set({ previewUrl: url, previewVisible: true })
+  },
+
+  closePreview: () => {
+    set({ previewUrl: null, previewVisible: false })
   },
 
   // --- Git modal actions ---
@@ -1134,6 +1257,141 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
   closeGitModal: () => {
     set({ gitModal: null })
+  },
+
+  // --- File explorer actions ---
+
+  loadDirectory: async (relativePath: string) => {
+    try {
+      const entries = await window.api.listDirectory(relativePath)
+      set(s => ({ fileTree: { ...s.fileTree, [relativePath]: entries } }))
+    } catch (e) {
+      console.error('Failed to load directory:', e)
+    }
+  },
+
+  toggleDirectory: (relativePath: string) => {
+    set(s => {
+      const expanded = s.expandedDirs.includes(relativePath)
+      return {
+        expandedDirs: expanded
+          ? s.expandedDirs.filter(d => d !== relativePath)
+          : [...s.expandedDirs, relativePath]
+      }
+    })
+    const state = get()
+    if (state.expandedDirs.includes(relativePath)) {
+      // Was just expanded, load children
+      state.loadDirectory(relativePath)
+    }
+  },
+
+  openFile: async (relativePath: string) => {
+    try {
+      const content = await window.api.readFile(relativePath)
+      set({ selectedFile: content, fileViewerOpen: true, fileViewerDirty: false })
+    } catch (e) {
+      console.error('Failed to open file:', e)
+    }
+  },
+
+  saveFile: async (relativePath: string, content: string) => {
+    try {
+      await window.api.writeFile(relativePath, content)
+      set({ fileViewerDirty: false })
+      const parentDir = relativePath.includes('/') ? relativePath.substring(0, relativePath.lastIndexOf('/')) : ''
+      get().loadDirectory(parentDir || '.')
+    } catch (e) {
+      console.error('Failed to save file:', e)
+    }
+  },
+
+  deleteFileEntry: async (relativePath: string) => {
+    try {
+      await window.api.deleteFile(relativePath)
+      const parentDir = relativePath.includes('/') ? relativePath.substring(0, relativePath.lastIndexOf('/')) : ''
+      get().loadDirectory(parentDir || '.')
+    } catch (e) {
+      console.error('Failed to delete file:', e)
+    }
+  },
+
+  renameFileEntry: async (oldPath: string, newName: string) => {
+    try {
+      await window.api.renameFile(oldPath, newName)
+      const parentDir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/')) : ''
+      get().loadDirectory(parentDir || '.')
+    } catch (e) {
+      console.error('Failed to rename file:', e)
+    }
+  },
+
+  createFileEntry: async (relativePath: string) => {
+    try {
+      await window.api.createFile(relativePath)
+      const parentDir = relativePath.includes('/') ? relativePath.substring(0, relativePath.lastIndexOf('/')) : ''
+      get().loadDirectory(parentDir || '.')
+    } catch (e) {
+      console.error('Failed to create file:', e)
+    }
+  },
+
+  createDirectoryEntry: async (relativePath: string) => {
+    try {
+      await window.api.createDirectory(relativePath)
+      const parentDir = relativePath.includes('/') ? relativePath.substring(0, relativePath.lastIndexOf('/')) : ''
+      get().loadDirectory(parentDir || '.')
+    } catch (e) {
+      console.error('Failed to create directory:', e)
+    }
+  },
+
+  closeFileViewer: () => {
+    set({ selectedFile: null, fileViewerOpen: false, fileViewerDirty: false })
+  },
+
+  // --- Voice actions ---
+
+  fetchVoiceConfig: async () => {
+    try {
+      const config = await window.api.getVoiceConfig()
+      set({ voiceConfig: config })
+    } catch (e) {
+      console.error('Failed to fetch voice config:', e)
+    }
+  },
+
+  updateVoiceConfig: async (config) => {
+    try {
+      await window.api.updateVoiceConfig(config)
+      const updated = await window.api.getVoiceConfig()
+      set({ voiceConfig: updated })
+    } catch (e) {
+      console.error('Failed to update voice config:', e)
+    }
+  },
+
+  setVoiceRecording: (recording) => set({ voiceRecording: recording }),
+  setVoiceProcessing: (processing) => set({ voiceProcessing: processing }),
+  setVoiceListening: (listening) => set({ voiceListening: listening }),
+  setVoiceAutoMode: (autoMode) => set({ voiceAutoMode: autoMode }),
+  setVoiceLastTranslation: (t) => set({ voiceLastTranslation: t }),
+
+  downloadWhisperModel: async () => {
+    try {
+      set({ whisperModelProgress: 0 })
+      const cleanup = window.api.onVoiceDownloadProgress((pct: number) => {
+        set({ whisperModelProgress: pct })
+      })
+      await window.api.downloadWhisperModel()
+      cleanup()
+      set({ whisperModelProgress: null })
+      const config = await window.api.getVoiceConfig()
+      set({ voiceConfig: config })
+    } catch (e) {
+      set({ whisperModelProgress: null })
+      console.error('Failed to download model:', e)
+    }
   },
 
   // --- Graph (unchanged) ---

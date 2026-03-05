@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from 'fs'
-import { join } from 'path'
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, readdirSync } from 'fs'
+import { join, basename } from 'path'
 import { homedir } from 'os'
 import { execFileSync } from 'child_process'
 
@@ -17,6 +17,7 @@ export interface ProjectEntry {
   name: string
   path: string
   branch: string
+  isInitialized: boolean
 }
 
 const CONFIG_DIR = join(homedir(), '.vibeflow')
@@ -26,6 +27,12 @@ const DEFAULT_CONFIG: WorkspaceConfig = {
   projects: [],
   activeProjectPath: null,
 }
+
+/** Directories that are never standalone projects. */
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'out', '.next',
+  '.cache', 'target', '__pycache__', '.venv', 'venv',
+])
 
 export class WorkspaceConfigManager {
   private config: WorkspaceConfig
@@ -88,6 +95,7 @@ export class WorkspaceConfigManager {
       name: p.name,
       path: p.path,
       branch: this.getBranch(p.path),
+      isInitialized: existsSync(join(p.path, '.git')) || existsSync(join(p.path, 'package.json')),
     }))
   }
 
@@ -96,13 +104,6 @@ export class WorkspaceConfigManager {
     const stat = statSync(absolutePath)
     if (!stat.isDirectory()) {
       throw new Error('Path is not a directory')
-    }
-
-    // Must have .git or package.json to qualify as a project
-    const hasGit = existsSync(join(absolutePath, '.git'))
-    const hasPkgJson = existsSync(join(absolutePath, 'package.json'))
-    if (!hasGit && !hasPkgJson) {
-      throw new Error('Directory must contain .git or package.json')
     }
 
     // Don't add duplicates
@@ -130,6 +131,112 @@ export class WorkspaceConfigManager {
   setActiveProject(absolutePath: string | null): void {
     this.config.activeProjectPath = absolutePath ? absolutePath.replace(/\/+$/, '') : null
     this.save()
+  }
+
+  /**
+   * Check if a directory has its own .git — the only reliable signal
+   * that it's an independent project (not a subpackage or build artifact).
+   */
+  private static hasOwnGit(dirPath: string): boolean {
+    return existsSync(join(dirPath, '.git'))
+  }
+
+  /**
+   * Scan immediate children of a directory for independent projects.
+   * Only matches directories with their own .git (not just package.json).
+   * Skips hidden dirs, node_modules, and common build/output directories.
+   */
+  private scanDirectChildren(parentPath: string): string[] {
+    try {
+      const entries = readdirSync(parentPath, { withFileTypes: true })
+      const results: string[] = []
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        if (entry.name.startsWith('.')) continue
+        if (SKIP_DIRS.has(entry.name)) continue
+        const childPath = join(parentPath, entry.name)
+        if (WorkspaceConfigManager.hasOwnGit(childPath)) {
+          results.push(childPath)
+        }
+      }
+      return results
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Smart add: detect if a folder is a single project or an umbrella
+   * containing independent sub-projects (each with their own .git).
+   *
+   * - Folder has .git and NO children with .git → single project, add it.
+   * - Folder has children with .git → umbrella, add each child instead.
+   * - Folder has nothing → add as uninitialized project.
+   */
+  addProjectSmart(absolutePath: string): ProjectEntry[] {
+    const stat = statSync(absolutePath)
+    if (!stat.isDirectory()) {
+      throw new Error('Path is not a directory')
+    }
+
+    const normalized = absolutePath.replace(/\/+$/, '')
+    const subProjects = this.scanDirectChildren(normalized)
+
+    if (subProjects.length > 0) {
+      // Umbrella directory — add each child project
+      for (const sp of subProjects) {
+        this.addProject(sp)
+      }
+      return this.getProjects()
+    }
+
+    // Single project or uninitialized folder — add directly
+    return this.addProject(normalized)
+  }
+
+  /**
+   * Auto-detect projects from the cwd on first launch.
+   * Only runs when the workspace list is completely empty.
+   *
+   * Detection strategy:
+   * 1. Check if cwd is inside an umbrella (parent has sibling projects with .git)
+   * 2. If cwd itself is an umbrella (has children with .git), add those
+   * 3. Otherwise, add cwd as a single project
+   */
+  autoDetectFromCwd(cwd: string): void {
+    if (this.config.projects.length > 0) return
+
+    const normalized = cwd.replace(/\/+$/, '')
+
+    // Strategy 1: Check parent — is cwd one project inside an umbrella?
+    const parentDir = join(normalized, '..')
+    const siblings = this.scanDirectChildren(parentDir)
+    if (siblings.length > 1) {
+      // Parent has multiple projects — cwd is inside an umbrella
+      for (const sp of siblings) {
+        const name = basename(sp)
+        this.config.projects.push({ name, path: sp })
+      }
+      this.save()
+      return
+    }
+
+    // Strategy 2: Is cwd itself an umbrella?
+    const subProjects = this.scanDirectChildren(normalized)
+    if (subProjects.length > 0) {
+      for (const sp of subProjects) {
+        const name = basename(sp)
+        this.config.projects.push({ name, path: sp })
+      }
+      this.save()
+      return
+    }
+
+    // Strategy 3: cwd is a standalone project
+    if (WorkspaceConfigManager.hasOwnGit(normalized)) {
+      this.config.projects.push({ name: basename(normalized), path: normalized })
+      this.save()
+    }
   }
 
   getActiveProjectPath(): string | null {

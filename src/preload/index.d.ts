@@ -1,5 +1,20 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
 
+export interface TranscriptionResult {
+  text: string
+  translatedText?: string
+  language: string
+  duration: number
+  provider: 'local' | 'groq' | 'sidecar'
+}
+
+export interface VoiceConfig {
+  preferredLanguage: string | null
+  provider: 'auto' | 'local' | 'groq' | 'sidecar'
+  groqApiKey: string | null
+  autoTranslate: boolean
+}
+
 interface AgentTask {
   id: string
   description: string
@@ -106,13 +121,56 @@ interface OptimizerConfig {
   models: Array<{ id: string; provider: string; displayName: string; costTier: string }>
 }
 
+interface ProjectDiagnosis {
+  git: {
+    hasGit: boolean
+    branch: string | null
+    uncommittedCount: number
+    unpushedCount: number
+    lastCommitMessage: string | null
+  }
+  stack: {
+    language: string
+    framework: string | null
+    packageManager: string | null
+    devCommand: string | null
+    buildCommand: string | null
+    testCommand: string | null
+  }
+  pulse: {
+    entryFiles: string[]
+    diagnosticCount: number
+    hasClaudeMd: boolean
+    hasPackageJson: boolean
+    isInitialized: boolean
+  }
+  suggestions: string[]
+}
+
+export interface FileEntry {
+  name: string
+  path: string
+  relativePath: string
+  isDirectory: boolean
+  size: number
+  modifiedAt: number
+}
+
+export interface FileContent {
+  path: string
+  relativePath: string
+  content: string
+  size: number
+  language: string
+}
+
 interface ApiInterface {
   submitIntent: (text: string, options?: IntentOptions) => Promise<void>
   approveIntent: () => Promise<void>
   rejectIntent: () => Promise<void>
   cancelTask: (taskId: string) => Promise<void>
   checkAuth: () => Promise<{ installed: boolean; authenticated: boolean }>
-  getProjects: () => Promise<Array<{ name: string; path: string; branch: string }>>
+  getProjects: () => Promise<Array<{ name: string; path: string; branch: string; isInitialized: boolean }>>
   startLogin: () => Promise<{ success: boolean }>
   onAgentEvent: (cb: (event: AgentEvent) => void) => () => void
   loadClaudeMd: () => Promise<string>
@@ -130,9 +188,11 @@ interface ApiInterface {
   checkConnectivity: () => Promise<{ connected: boolean; version: string | null }>
   checkGitHub: () => Promise<{ authenticated: boolean; username: string | null; remote: string | null }>
   githubLogin: () => Promise<{ started: boolean }>
+  diagnoseProject: () => Promise<ProjectDiagnosis>
+  scaffoldProject: (cwd: string) => Promise<{ success: boolean; output: string }>
   switchProject: (path: string) => Promise<{ success: boolean }>
   getActiveProject: () => Promise<string | null>
-  addProject: () => Promise<{ success: boolean; projects: Array<{ name: string; path: string; branch: string }> }>
+  addProject: () => Promise<{ success: boolean; projects: Array<{ name: string; path: string; branch: string; isInitialized: boolean }> }>
   removeProject: (path: string) => Promise<{ success: boolean }>
   submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) => Promise<void>
   cancelChat: () => Promise<void>
@@ -164,6 +224,21 @@ interface ApiInterface {
   generateCommitMessage: () => Promise<string>
   commitWithMessage: (message: string) => Promise<{ success: boolean; output: string }>
   pushToBranch: (branch: string) => Promise<{ success: boolean; output: string }>
+  // File operations
+  listDirectory(relativePath: string): Promise<FileEntry[]>
+  readFile(relativePath: string): Promise<FileContent>
+  writeFile(relativePath: string, content: string): Promise<void>
+  deleteFile(relativePath: string): Promise<void>
+  renameFile(oldRelative: string, newName: string): Promise<void>
+  createFile(relativePath: string, content?: string): Promise<void>
+  createDirectory(relativePath: string): Promise<void>
+  // Voice
+  transcribeAudio(audioBase64: string): Promise<TranscriptionResult>
+  getVoiceConfig(): Promise<VoiceConfig & { localAvailable: boolean; modelDownloaded: boolean; sidecarAvailable?: boolean }>
+  updateVoiceConfig(config: Partial<VoiceConfig>): Promise<void>
+  downloadWhisperModel(): Promise<void>
+  onVoiceDownloadProgress(callback: (pct: number) => void): () => void
+  translateText(text: string, sourceLang: string): Promise<{ translated: string }>
 }
 
 declare global {

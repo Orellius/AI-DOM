@@ -2,6 +2,7 @@ import { EventEmitter } from 'events'
 import { ChildProcess, spawn, execFileSync, spawnSync } from 'child_process'
 import { readdirSync, readFileSync, statSync } from 'fs'
 import { join, dirname } from 'path'
+import { randomUUID } from 'crypto'
 import { ClaudeCli } from './claude-cli'
 
 export interface AgentTask {
@@ -387,7 +388,7 @@ export class AgentOrchestrator extends EventEmitter {
 
   // --- Chat mode ---
 
-  submitChat(text: string, options?: { allowedTools?: string[]; maxTurns?: number }): void {
+  submitChat(text: string, options?: { allowedTools?: string[]; maxTurns?: number; dangerouslySkipPermissions?: boolean }): void {
     if (!text || typeof text !== 'string') throw new Error('Chat text must be a non-empty string')
     const sanitized = text.trim().slice(0, MAX_INTENT_LENGTH)
     if (!sanitized) throw new Error('Chat text is empty after sanitization')
@@ -400,7 +401,7 @@ export class AgentOrchestrator extends EventEmitter {
 
     const isResume = !!this.chatSessionId
     if (!this.chatSessionId) {
-      this.chatSessionId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      this.chatSessionId = randomUUID()
     }
 
     const cli = new ClaudeCli()
@@ -441,8 +442,9 @@ export class AgentOrchestrator extends EventEmitter {
       text: sanitized,
       sessionId: this.chatSessionId,
       isResume,
-      allowedTools: options?.allowedTools,
-      maxTurns: options?.maxTurns ?? this.maxTurns
+      allowedTools: options?.dangerouslySkipPermissions ? undefined : options?.allowedTools,
+      maxTurns: options?.maxTurns ?? this.maxTurns,
+      dangerouslySkipPermissions: options?.dangerouslySkipPermissions
     })
   }
 
@@ -627,7 +629,8 @@ export class AgentOrchestrator extends EventEmitter {
       prompt: task.description,
       outputFormat: 'stream-json',
       maxTurns: this.maxTurns,
-      allowedTools
+      allowedTools,
+      dangerouslySkipPermissions: this.currentPermissions.skipPermissions
     })
 
     this.processes.set(task.id, proc)

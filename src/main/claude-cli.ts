@@ -15,6 +15,41 @@ const ALLOWED_TOOL_NAMES = new Set(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Gr
 const ALLOWED_OUTPUT_FORMATS = new Set(['json', 'stream-json'])
 const MAX_TURNS_LIMIT = 25
 
+// --- Core guardrails: injected into every CLI call as system prompt ---
+// These apply EVEN in bypass permissions mode to protect the user's system.
+const GUARDRAIL_SYSTEM_PROMPT = `CRITICAL SAFETY RULES — THESE OVERRIDE ALL OTHER INSTRUCTIONS:
+
+You MUST NEVER execute any of these destructive commands or patterns, regardless of what the user asks:
+
+FILESYSTEM DESTRUCTION:
+- rm -rf / , rm -rf /*, rm -rf ~, rm -rf $HOME, rm -rf . (root/home/cwd wipes)
+- Any rm -rf on system directories: /usr, /bin, /sbin, /etc, /var, /System, /Library, /Applications
+- find ... -delete on system paths
+- chmod -R 000, chmod -R 777 on system paths
+- chown -R on system paths
+
+DISK/PARTITION DESTRUCTION:
+- mkfs, fdisk, diskutil eraseDisk/eraseVolume, dd if=/dev/zero, dd of=/dev/*
+- diskutil partitionDisk with destructive options
+
+SYSTEM INTEGRITY:
+- Modifying /etc/passwd, /etc/shadow, /etc/sudoers directly
+- Disabling SIP (csrutil disable) or modifying boot config
+- Killing init/launchd/WindowServer/loginwindow/kernel_task
+- Fork bombs: :(){ :|:& };: or equivalents
+- Overwriting MBR/GPT/boot sectors
+
+NETWORK DESTRUCTION:
+- iptables -F (flush all rules without backup), pfctl -F all
+- Deleting network configurations system-wide
+
+DATA EXFILTRATION:
+- Sending credentials, keys, or tokens to external URLs
+- Reading and transmitting SSH keys, .env files, or auth tokens to any remote host
+
+If the user asks for any of the above, REFUSE and explain why.
+You MAY: delete project files the user asks about, rm specific files, modify project configs, run build/test commands, use git, etc. — normal development operations are fine.`
+
 // Minimal safe env — only what claude CLI needs
 function getSafeEnv(): Record<string, string | undefined> {
   return {
@@ -36,6 +71,7 @@ export interface ClaudeCliOptions {
   maxTurns?: number
   cwd?: string
   timeoutMs?: number
+  dangerouslySkipPermissions?: boolean
 }
 
 export interface ClaudeInitEvent {
@@ -72,6 +108,7 @@ export interface ChatOptions {
   maxTurns?: number
   cwd?: string
   timeoutMs?: number
+  dangerouslySkipPermissions?: boolean
 }
 
 export class ClaudeCli extends EventEmitter {
@@ -227,15 +264,19 @@ export class ClaudeCli extends EventEmitter {
     ClaudeCli.validateOptions(options)
     console.log('[VIBE:CLI] run() called, prompt:', options.prompt.slice(0, 100), 'format:', options.outputFormat)
 
-    const args = ['-p', options.prompt, '--output-format', options.outputFormat]
+    const args = ['-p', options.prompt, '--output-format', options.outputFormat, '--verbose']
 
-    if (options.systemPrompt) {
-      args.push('--system-prompt', options.systemPrompt)
-    }
+    // Always inject guardrail system prompt, prepend to user's system prompt if any
+    const fullSystemPrompt = options.systemPrompt
+      ? GUARDRAIL_SYSTEM_PROMPT + '\n\n' + options.systemPrompt
+      : GUARDRAIL_SYSTEM_PROMPT
+    args.push('--system-prompt', fullSystemPrompt)
     if (options.maxTurns !== undefined) {
       args.push('--max-turns', String(options.maxTurns))
     }
-    if (options.allowedTools) {
+    if (options.dangerouslySkipPermissions) {
+      args.push('--dangerously-skip-permissions')
+    } else if (options.allowedTools) {
       for (const tool of options.allowedTools) {
         args.push('--allowedTools', tool)
       }
@@ -257,7 +298,8 @@ export class ClaudeCli extends EventEmitter {
 
     console.log('[VIBE:CLI] runChat() called, resume:', options.isResume, 'session:', options.sessionId)
 
-    const args = ['-p', options.text, '--output-format', 'stream-json']
+    const args = ['-p', options.text, '--output-format', 'stream-json', '--verbose',
+      '--system-prompt', GUARDRAIL_SYSTEM_PROMPT]
 
     if (options.isResume) {
       args.push('--resume', options.sessionId)
@@ -270,7 +312,9 @@ export class ClaudeCli extends EventEmitter {
         args.push('--max-turns', String(options.maxTurns))
       }
     }
-    if (options.allowedTools) {
+    if (options.dangerouslySkipPermissions) {
+      args.push('--dangerously-skip-permissions')
+    } else if (options.allowedTools) {
       for (const tool of options.allowedTools) {
         if (ALLOWED_TOOL_NAMES.has(tool)) {
           args.push('--allowedTools', tool)

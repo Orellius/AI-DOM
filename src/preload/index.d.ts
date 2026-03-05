@@ -69,7 +69,7 @@ interface ApiInterface {
   githubLogin: () => Promise<{ started: boolean }>
   switchProject: (name: string) => Promise<{ success: boolean }>
   getActiveProject: () => Promise<string | null>
-  submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) => Promise<void>
+  submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number; dangerouslySkipPermissions?: boolean }) => Promise<void>
   cancelChat: () => Promise<void>
   clearChat: () => Promise<void>
 }

@@ -159,7 +159,7 @@ export function registerIpcHandlers(
     if (typeof text !== 'string' || !text.trim()) {
       throw new Error('Invalid chat text: must be a non-empty string')
     }
-    orchestrator.submitChat(text, options as { allowedTools?: string[]; maxTurns?: number } | undefined)
+    orchestrator.submitChat(text, options as { allowedTools?: string[]; maxTurns?: number; dangerouslySkipPermissions?: boolean } | undefined)
   })
 
   ipcMain.handle('agent:cancel-chat', () => {

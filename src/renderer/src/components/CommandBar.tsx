@@ -12,7 +12,7 @@ const PERMISSION_CHIPS: Array<{
   { key: 'files', label: 'Files' },
   { key: 'terminal', label: 'Terminal' },
   { key: 'search', label: 'Search' },
-  { key: 'skipPermissions', label: 'Skip Perms', danger: true }
+  { key: 'skipPermissions', label: 'Bypass Perms', danger: true }
 ]
 
 export function CommandBar(): JSX.Element {
@@ -126,15 +126,16 @@ export function CommandBar(): JSX.Element {
         </button>
 
         <span
+          className="chip"
           style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: scaled(10),
-            color: 'var(--color-text-dim)',
-            marginLeft: '2px',
-            marginRight: '4px',
+            fontSize: scaled(11),
+            color: 'var(--color-text-muted)',
+            padding: '3px 8px',
+            letterSpacing: '0.05em',
           }}
         >
-          ⇧Tab
+          ⇧ Tab
         </span>
 
         {/* Divider */}
@@ -170,10 +171,10 @@ export function CommandBar(): JSX.Element {
             <AlertTriangle size={13} style={{ color: 'var(--color-red)', marginTop: '1px', flexShrink: 0 }} />
             <div>
               <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(13), fontWeight: 600, color: 'var(--color-red)' }}>
-                Unrestricted access
+                Bypass Permissions Mode
               </p>
               <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(12), color: 'rgba(255, 64, 96, 0.6)', marginTop: '3px', lineHeight: '1.5' }}>
-                Agent gets full tool access. Use only for trusted tasks in isolated environments.
+                Agent skips permission prompts. Dangerous commands are still blocked by core guardrails.
               </p>
               <div className="mt-2 flex gap-2">
                 <button onClick={confirmSkipPermissions} className="btn btn-danger" style={{ fontSize: scaled(12), padding: '3px 10px' }}>

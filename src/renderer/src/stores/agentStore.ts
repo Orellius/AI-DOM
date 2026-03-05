@@ -525,7 +525,8 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
     window.api.submitChat(text, {
       allowedTools: permissions.skipPermissions ? undefined : (allowedTools.length > 0 ? allowedTools : undefined),
-      maxTurns: settings.maxTurns
+      maxTurns: settings.maxTurns,
+      dangerouslySkipPermissions: permissions.skipPermissions
     }).catch((err: unknown) => {
       const errMsg = err instanceof Error ? err.message : String(err)
       set((state) => ({

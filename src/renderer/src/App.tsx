@@ -96,6 +96,44 @@ function App(): JSX.Element {
     return <Onboarding />
   }
 
+  // Each tab renders full-width in the content area
+  const renderTabContent = (): JSX.Element => {
+    switch (activeTab) {
+      case 'stream':
+        return <ActivityStream />
+      case 'graph':
+        return (
+          <div className="panel glow-accent h-full overflow-hidden">
+            <NeuralMap />
+          </div>
+        )
+      case 'changes':
+        return (
+          <div className="panel h-full overflow-hidden">
+            <FileChangeFeed />
+          </div>
+        )
+      case 'server':
+        return (
+          <div className="panel h-full overflow-hidden">
+            <DevServerPanel />
+          </div>
+        )
+      case 'config':
+        return (
+          <div className="panel h-full overflow-hidden">
+            <SettingsPanel />
+          </div>
+        )
+      case 'profile':
+        return (
+          <div className="panel h-full overflow-hidden">
+            <ProfileBuilder />
+          </div>
+        )
+    }
+  }
+
   return (
     <div className="h-screen flex flex-col relative" style={{ background: 'var(--color-base)' }}>
       {/* macOS titlebar */}
@@ -119,7 +157,7 @@ function App(): JSX.Element {
         </div>
       </div>
 
-      {/* Main layout: nav sidebar + content */}
+      {/* Main layout: nav sidebar + full content */}
       <div className="flex-1 min-h-0 flex">
         {/* ── Vertical Nav Sidebar ── */}
         <div
@@ -135,7 +173,7 @@ function App(): JSX.Element {
           <div className="flex-1 flex flex-col gap-0.5 py-2 px-1.5 overflow-hidden">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon
-              const isActive = activeTab === item.id
+              const isActive = activeTab === item.id && mode === 'build'
               return (
                 <button
                   key={item.id}
@@ -267,73 +305,15 @@ function App(): JSX.Element {
           </div>
         </div>
 
-        {/* ── Content Area ── */}
-        <div
-          className="flex-1 min-h-0 p-3"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '220px 1fr 250px',
-            gridTemplateRows: '1fr auto',
-            gap: '10px',
-            gridTemplateAreas: `
-              "left    center  sidebar"
-              "cmd     cmd     cmd"
-            `
-          }}
-        >
-          {/* Left: Conversation + Swarm */}
-          <div style={{ gridArea: 'left' }} className="flex flex-col gap-2.5 min-h-0 overflow-hidden">
-            <div className="panel overflow-y-auto shrink-0 max-h-[38%]">
-              <ConversationThread />
-            </div>
-            <div className="panel overflow-y-auto flex-1 min-h-0">
-              <AgentSwarm />
-            </div>
-          </div>
-
-          {/* Center: ChatPanel in chat mode, tab content in build mode */}
-          <div style={{ gridArea: 'center' }} className="min-h-0 overflow-hidden">
-            {mode === 'chat' ? (
-              <ChatPanel />
-            ) : (
-              <>
-                {activeTab === 'stream' && <ActivityStream />}
-                {activeTab === 'graph' && (
-                  <div className="panel glow-accent h-full overflow-hidden">
-                    <NeuralMap />
-                  </div>
-                )}
-                {activeTab === 'changes' && (
-                  <div className="panel h-full overflow-hidden">
-                    <FileChangeFeed />
-                  </div>
-                )}
-                {activeTab === 'server' && (
-                  <div className="panel h-full overflow-hidden">
-                    <DevServerPanel />
-                  </div>
-                )}
-                {activeTab === 'config' && (
-                  <div className="panel h-full overflow-hidden">
-                    <SettingsPanel />
-                  </div>
-                )}
-                {activeTab === 'profile' && (
-                  <div className="panel h-full overflow-hidden">
-                    <ProfileBuilder />
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Right: Projects */}
-          <div style={{ gridArea: 'sidebar' }} className="panel overflow-hidden">
-            <Sidebar />
+        {/* ── Full Content Area ── */}
+        <div className="flex-1 min-h-0 flex flex-col p-3 gap-2.5">
+          {/* Main content — full width, full height */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {mode === 'chat' ? <ChatPanel /> : renderTabContent()}
           </div>
 
           {/* Bottom: Actions + Command */}
-          <div style={{ gridArea: 'cmd' }} className="panel glow-cmd flex flex-col gap-2.5">
+          <div className="shrink-0 panel glow-cmd flex flex-col gap-2.5">
             <QuickActions />
             <CommandBar />
           </div>

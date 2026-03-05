@@ -215,6 +215,7 @@ export class ClaudeCli extends EventEmitter {
 
   run(options: ClaudeCliOptions): ChildProcess {
     ClaudeCli.validateOptions(options)
+    console.log('[VIBE:CLI] run() called, prompt:', options.prompt.slice(0, 100), 'format:', options.outputFormat)
 
     // Build args array — spawn() passes these as separate argv entries (no shell injection)
     const args = ['-p', options.prompt, '--output-format', options.outputFormat]
@@ -232,11 +233,13 @@ export class ClaudeCli extends EventEmitter {
     }
 
     // spawn() without shell: true — args are passed directly to execvp, no shell interpretation
+    console.log('[VIBE:CLI] spawning: claude', args.map((a, i) => i === 1 ? a.slice(0, 50) + '...' : a).join(' '))
     const proc = spawn('claude', args, {
       cwd: options.cwd ? resolve(options.cwd) : undefined,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: getSafeEnv()
     })
+    console.log('[VIBE:CLI] process spawned, pid:', proc.pid)
 
     this.process = proc
     let buffer = ''
@@ -250,6 +253,8 @@ export class ClaudeCli extends EventEmitter {
     }, timeout)
 
     proc.stdout?.on('data', (chunk: Buffer) => {
+      const chunkStr = chunk.toString()
+      console.log('[VIBE:CLI] stdout chunk (' + chunk.length + ' bytes):', chunkStr.slice(0, 200))
       totalOutputSize += chunk.length
       if (totalOutputSize > MAX_OUTPUT_BUFFER) {
         this.kill()
@@ -257,7 +262,7 @@ export class ClaudeCli extends EventEmitter {
         return
       }
 
-      buffer += chunk.toString()
+      buffer += chunkStr
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
 
@@ -266,34 +271,39 @@ export class ClaudeCli extends EventEmitter {
         if (!trimmed) continue
         try {
           const parsed = JSON.parse(trimmed) as ClaudeStreamEvent
+          console.log('[VIBE:CLI] parsed event type:', parsed.type)
           this.emit('event', parsed)
           this.emit(parsed.type, parsed)
         } catch {
-          // non-JSON output, ignore
+          console.log('[VIBE:CLI] non-JSON line:', trimmed.slice(0, 100))
         }
       }
     })
 
     proc.stderr?.on('data', (chunk: Buffer) => {
+      const stderrStr = chunk.toString()
+      console.error('[VIBE:CLI] stderr:', stderrStr.slice(0, 300))
       totalOutputSize += chunk.length
       if (totalOutputSize > MAX_OUTPUT_BUFFER) {
         this.kill()
         this.emit('error', new Error('Stderr exceeded maximum buffer size'))
         return
       }
-      this.emit('error', new Error(chunk.toString()))
+      this.emit('error', new Error(stderrStr))
     })
 
     proc.on('close', (code) => {
+      console.log('[VIBE:CLI] process closed, code:', code)
       this.clearTimeout()
       // flush remaining buffer
       if (buffer.trim()) {
+        console.log('[VIBE:CLI] flushing remaining buffer:', buffer.trim().slice(0, 200))
         try {
           const parsed = JSON.parse(buffer.trim()) as ClaudeStreamEvent
           this.emit('event', parsed)
           this.emit(parsed.type, parsed)
         } catch {
-          // ignore
+          console.log('[VIBE:CLI] remaining buffer not JSON')
         }
       }
       this.process = null
@@ -301,6 +311,7 @@ export class ClaudeCli extends EventEmitter {
     })
 
     proc.on('error', (err) => {
+      console.error('[VIBE:CLI] process error event:', err)
       this.clearTimeout()
       this.emit('error', err)
     })

@@ -180,6 +180,7 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   snapshots: [],
 
   handleEvent: (event) => {
+    console.log('[VIBE:Store] handleEvent:', event.type, event)
     const { addActivity } = get()
 
     switch (event.type) {
@@ -336,15 +337,18 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   },
 
   submitIntent: (text) => {
+    console.log('[VIBE:Store] submitIntent called:', text)
     const { permissions, settings } = get()
+    console.log('[VIBE:Store] permissions:', permissions, 'settings:', settings)
     const convId = `conv-${Date.now()}`
 
     // Create snapshot before executing
     window.api.createSnapshot(text).then((snapshot) => {
+      console.log('[VIBE:Store] snapshot result:', snapshot)
       if (snapshot) {
         set((state) => ({ snapshots: [...state.snapshots, snapshot] }))
       }
-    })
+    }).catch((err: unknown) => console.error('[VIBE:Store] snapshot error:', err))
 
     set((state) => ({
       architectStatus: 'thinking',
@@ -364,7 +368,10 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     }))
 
     get().addActivity({ type: 'system', content: `Intent: "${text}"` })
+    console.log('[VIBE:Store] calling window.api.submitIntent...')
     window.api.submitIntent(text, { permissions, settings })
+      .then(() => console.log('[VIBE:Store] submitIntent IPC resolved OK'))
+      .catch((err: unknown) => console.error('[VIBE:Store] submitIntent IPC REJECTED:', err))
   },
 
   setPermission: (key, value) => {

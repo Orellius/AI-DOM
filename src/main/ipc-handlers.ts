@@ -10,6 +10,7 @@ export function registerIpcHandlers(
 ): void {
   // Forward all orchestrator events to the renderer
   orchestrator.on('event', (event: AgentEvent) => {
+    console.log('[VIBE:IPC] forwarding event to renderer:', event.type)
     if (mainWindow.isDestroyed()) return
     mainWindow.webContents.send('agent:event', event)
   })
@@ -21,10 +22,18 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('agent:submit-intent', async (_event, text: unknown, options: unknown) => {
+    console.log('[VIBE:IPC] agent:submit-intent received:', text)
     if (typeof text !== 'string' || !text.trim()) {
+      console.error('[VIBE:IPC] invalid intent text:', text)
       throw new Error('Invalid intent: must be a non-empty string')
     }
-    await orchestrator.submitIntent(text, options as Record<string, unknown> | undefined)
+    try {
+      await orchestrator.submitIntent(text, options as Record<string, unknown> | undefined)
+      console.log('[VIBE:IPC] submitIntent completed successfully')
+    } catch (err) {
+      console.error('[VIBE:IPC] submitIntent threw:', err)
+      throw err
+    }
   })
 
   ipcMain.handle('agent:cancel-task', (_event, taskId: unknown) => {

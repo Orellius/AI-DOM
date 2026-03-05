@@ -27,6 +27,7 @@ export function CommandBar(): JSX.Element {
     e.preventDefault()
     const text = input.trim()
     if (!text) return
+    console.log('[VIBE:CommandBar] submit:', text)
     submitIntent(text)
     setInput('')
   }

@@ -76,6 +76,7 @@ export class AgentOrchestrator extends EventEmitter {
   }
 
   async submitIntent(text: string, options?: Record<string, unknown>): Promise<void> {
+    console.log('[VIBE:Orchestrator] submitIntent:', text)
     if (!text || typeof text !== 'string') {
       throw new Error('Intent must be a non-empty string')
     }
@@ -91,8 +92,11 @@ export class AgentOrchestrator extends EventEmitter {
 
     let subtasks: AgentTask[]
     try {
+      console.log('[VIBE:Orchestrator] calling runArchitect...')
       subtasks = await this.runArchitect(sanitized)
+      console.log('[VIBE:Orchestrator] architect returned', subtasks.length, 'tasks:', subtasks)
     } catch (err) {
+      console.error('[VIBE:Orchestrator] runArchitect FAILED:', err)
       const msg = err instanceof Error ? err.message : String(err)
       if (msg.includes('auth') || msg.includes('login') || msg.includes('unauthorized') || msg.includes('exited with code')) {
         this.emitEvent({ type: 'auth:status', installed: true, authenticated: false })
@@ -370,14 +374,17 @@ export class AgentOrchestrator extends EventEmitter {
   }
 
   private async runArchitect(intent: string): Promise<AgentTask[]> {
+    console.log('[VIBE:Architect] spawning architect for:', intent)
     const cli = new ClaudeCli()
 
     return new Promise((resolve, reject) => {
       let resultText = ''
 
       cli.on('assistant', (event: { message: { content: Array<{ type: string; text?: string }> } }) => {
+        console.log('[VIBE:Architect] got assistant event, blocks:', event.message.content.length)
         for (const block of event.message.content) {
           if (block.type === 'text' && block.text) {
+            console.log('[VIBE:Architect] text block:', block.text.slice(0, 200))
             this.emitEvent({ type: 'architect:thinking', content: block.text })
             resultText += block.text
           }
@@ -385,10 +392,13 @@ export class AgentOrchestrator extends EventEmitter {
       })
 
       cli.on('result', (event: { result: string }) => {
+        console.log('[VIBE:Architect] got result event:', String(event.result).slice(0, 300))
         resultText = event.result || resultText
       })
 
-      cli.on('close', () => {
+      cli.on('close', (code: number | null) => {
+        console.log('[VIBE:Architect] process closed with code:', code)
+        console.log('[VIBE:Architect] resultText:', resultText.slice(0, 500))
         try {
           const parsed = this.parseTaskArray(resultText)
           const capped = parsed.slice(0, MAX_TASKS_PER_INTENT)
@@ -401,20 +411,27 @@ export class AgentOrchestrator extends EventEmitter {
             agent: 'worker' as const,
             dependencies: (t.dependencies || []).filter((d: string) => validIds.has(d))
           }))
+          console.log('[VIBE:Architect] parsed tasks:', tasks.length)
           resolve(tasks)
         } catch (err) {
+          console.error('[VIBE:Architect] parse FAILED:', err, 'raw:', resultText.slice(0, 500))
           reject(new Error(`Failed to parse architect output: ${err}`))
         }
       })
 
-      cli.on('error', reject)
+      cli.on('error', (err: Error) => {
+        console.error('[VIBE:Architect] error event:', err)
+        reject(err)
+      })
 
+      console.log('[VIBE:Architect] calling cli.run() with prompt:', intent.slice(0, 100))
       cli.run({
         prompt: intent,
         systemPrompt: ARCHITECT_SYSTEM_PROMPT,
         outputFormat: 'json',
         maxTurns: 1
       })
+      console.log('[VIBE:Architect] cli.run() returned (process spawned)')
     })
   }
 

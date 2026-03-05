@@ -62,10 +62,10 @@ impl Transcriber {
 
         let duration = pcm_data.len() as f32 / 16000.0;
         let language = state
-            .full_lang_id()
+            .full_lang_id_from_state()
             .ok()
             .and_then(|id| {
-                whisper_rs::get_lang_str(id).ok().map(|s| s.to_string())
+                whisper_rs::get_lang_str(id).map(|s| s.to_string())
             })
             .unwrap_or_else(|| self.language.clone());
 

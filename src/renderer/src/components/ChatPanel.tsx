@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Eraser, Terminal, Wrench, ChevronRight } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import type { ChatMessage } from '../stores/agentStore'
@@ -7,6 +7,8 @@ import { ThinkingIndicator } from './ThinkingIndicator'
 import { ModeSwitchBanner } from './ModeSwitchBanner'
 import { MarkdownContent } from './MarkdownContent'
 import { AtomicConfirmOverlay } from './AtomicConfirmButton'
+import { MessageContextMenu, buildMessageActions } from './MessageContextMenu'
+import type { ContextMenuAction } from './MessageContextMenu'
 
 function ToolCallCard({ name, input }: { name: string; input: string }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
@@ -80,12 +82,53 @@ function cleanAssistantContent(text: string): string {
     .trim()
 }
 
-function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
+function MessageBubble({ msg, onContextMenu }: {
+  msg: ChatMessage
+  onContextMenu: (e: React.MouseEvent, msgId: string) => void
+}): JSX.Element {
   const isUser = msg.role === 'user'
   const displayContent = isUser ? msg.content : cleanAssistantContent(msg.content)
+  const [editing, setEditing] = useState(false)
+  const [editText, setEditText] = useState(msg.content)
+  const editRef = useRef<HTMLTextAreaElement>(null)
+  const editAndReprompt = useAgentStore((s) => s.editAndReprompt)
+
+  useEffect(() => {
+    if (editing && editRef.current) {
+      editRef.current.focus()
+      editRef.current.setSelectionRange(editRef.current.value.length, editRef.current.value.length)
+    }
+  }, [editing])
+
+  const handleEditSubmit = (): void => {
+    const trimmed = editText.trim()
+    if (!trimmed || trimmed === msg.content) {
+      setEditing(false)
+      return
+    }
+    editAndReprompt(msg.id, trimmed)
+    setEditing(false)
+  }
+
+  // Expose edit trigger via a data attribute the parent can call
+  const handleRightClick = (e: React.MouseEvent): void => {
+    if (msg.isStreaming) return
+    onContextMenu(e, msg.id)
+  }
+
+  // The parent ChatPanel calls this via ref pattern, but simpler: use a global
+  // We attach startEdit to the bubble so the context menu can trigger it
+  ;(MessageBubble as { startEditMap?: Map<string, () => void> }).startEditMap?.set(msg.id, () => {
+    setEditText(msg.content)
+    setEditing(true)
+  })
 
   return (
-    <div className="animate-slide-up" style={{ marginBottom: '12px' }}>
+    <div
+      className="animate-slide-up"
+      style={{ marginBottom: '12px' }}
+      onContextMenu={handleRightClick}
+    >
       {/* Role label */}
       <div className="flex items-center gap-1.5 mb-1">
         {!isUser && <Terminal size={11} style={{ color: 'var(--color-accent-dim)' }} />}
@@ -133,7 +176,39 @@ function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
         )}
 
         {/* Message text */}
-        {msg.isStreaming && !msg.content ? (
+        {editing ? (
+          <div>
+            <textarea
+              ref={editRef}
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              className="input"
+              rows={3}
+              style={{ resize: 'vertical', fontSize: scaled(13), minHeight: '60px' }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && e.metaKey) handleEditSubmit()
+                if (e.key === 'Escape') setEditing(false)
+              }}
+            />
+            <div className="flex items-center justify-end gap-2 mt-2">
+              <button
+                onClick={() => setEditing(false)}
+                className="btn"
+                style={{ fontSize: scaled(11), padding: '2px 8px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditSubmit}
+                disabled={!editText.trim()}
+                className="btn btn-accent"
+                style={{ fontSize: scaled(11), padding: '2px 8px' }}
+              >
+                Reprompt
+              </button>
+            </div>
+          </div>
+        ) : msg.isStreaming && !msg.content ? (
           <ThinkingIndicator />
         ) : isUser ? (
           <div
@@ -156,11 +231,18 @@ function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
   )
 }
 
+// Shared map for triggering edit mode from context menu
+if (!(MessageBubble as { startEditMap?: Map<string, () => void> }).startEditMap) {
+  ;(MessageBubble as { startEditMap?: Map<string, () => void> }).startEditMap = new Map()
+}
+
 export function ChatPanel(): JSX.Element {
   const chatMessages = useAgentStore((s) => s.chatMessages)
   const chatStreaming = useAgentStore((s) => s.chatStreaming)
   const clearChat = useAgentStore((s) => s.clearChat)
+  const deleteMessage = useAgentStore((s) => s.deleteMessage)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msgId: string; actions: ContextMenuAction[] } | null>(null)
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -168,6 +250,26 @@ export function ChatPanel(): JSX.Element {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [chatMessages, chatStreaming])
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, msgId: string) => {
+    e.preventDefault()
+    const msg = chatMessages.find((m) => m.id === msgId)
+    if (!msg) return
+
+    const actions = buildMessageActions({
+      isUser: msg.role === 'user',
+      content: msg.content,
+      messageId: msgId,
+      onEdit: () => {
+        const editMap = (MessageBubble as { startEditMap?: Map<string, () => void> }).startEditMap
+        editMap?.get(msgId)?.()
+      },
+      onDelete: () => deleteMessage(msgId),
+    })
+    setCtxMenu({ x: e.clientX, y: e.clientY, msgId, actions })
+  }, [chatMessages, deleteMessage])
+
+  const closeCtxMenu = useCallback(() => setCtxMenu(null), [])
 
   return (
     <div className="panel h-full flex flex-col overflow-hidden">
@@ -211,9 +313,21 @@ export function ChatPanel(): JSX.Element {
             </p>
           </div>
         ) : (
-          chatMessages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
+          chatMessages.map((msg) => (
+            <MessageBubble key={msg.id} msg={msg} onContextMenu={handleContextMenu} />
+          ))
         )}
       </div>
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <MessageContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          actions={ctxMenu.actions}
+          onClose={closeCtxMenu}
+        />
+      )}
     </div>
   )
 }

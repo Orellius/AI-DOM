@@ -1,11 +1,15 @@
 import { Play, GitCommit, GitBranch, TestTube2, Undo2, Square } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
+import { scaled } from '../utils/scale'
 
 export function QuickActions(): JSX.Element {
   const runQuickAction = useAgentStore((s) => s.runQuickAction)
   const snapshots = useAgentStore((s) => s.snapshots)
   const devServer = useAgentStore((s) => s.devServer)
   const setDevServer = useAgentStore((s) => s.setDevServer)
+  const mode = useAgentStore((s) => s.mode)
+  const gitStatus = useAgentStore((s) => s.gitStatus)
+  const openGitModal = useAgentStore((s) => s.openGitModal)
 
   const handleRun = (): void => {
     if (devServer.running) {
@@ -19,7 +23,19 @@ export function QuickActions(): JSX.Element {
   const canUndo = snapshots.length > 0
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-3">
+      {/* Spacer matching the > / ~ prompt width in CommandBar */}
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: scaled(16),
+          fontWeight: 600,
+          visibility: 'hidden',
+        }}
+      >
+        {mode === 'chat' ? '~' : '>'}
+      </span>
+      <div className="flex items-center gap-1.5">
       <button
         onClick={handleRun}
         className={devServer.running ? 'btn btn-danger' : 'btn btn-accent'}
@@ -28,14 +44,20 @@ export function QuickActions(): JSX.Element {
         {devServer.running ? 'Stop' : 'Run'}
       </button>
 
-      <button onClick={() => runQuickAction('commit')} className="btn">
+      <button onClick={() => openGitModal('commit')} className="btn" style={{ position: 'relative' }}>
         <GitCommit size={10} />
         Commit
+        {gitStatus.uncommittedCount > 0 && (
+          <span className="quick-action-badge" style={{ background: 'var(--color-amber)' }} />
+        )}
       </button>
 
-      <button onClick={() => runQuickAction('push')} className="btn">
+      <button onClick={() => openGitModal('push')} className="btn" style={{ position: 'relative' }}>
         <GitBranch size={10} />
         Push
+        {gitStatus.unpushedCount > 0 && (
+          <span className="quick-action-badge" style={{ background: 'var(--color-cyan)' }} />
+        )}
       </button>
 
       <button onClick={() => runQuickAction('test')} className="btn">
@@ -51,6 +73,7 @@ export function QuickActions(): JSX.Element {
         <Undo2 size={10} />
         Undo
       </button>
+      </div>
     </div>
   )
 }

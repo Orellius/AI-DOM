@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Sliders,
+  FolderGit2,
 } from 'lucide-react'
 import { useAgentStore } from './stores/agentStore'
 import { useAgentEvents } from './hooks/useAgentEvents'
@@ -27,6 +28,8 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { ProfileBuilder } from './components/ProfileBuilder'
 import { ChatPanel } from './components/ChatPanel'
 import { ModelOptimizer } from './components/ModelOptimizer'
+import { GitModal } from './components/GitModal'
+import { UmbrellaSync } from './components/UmbrellaSync'
 
 const NAV_ITEMS = [
   { id: 'stream', label: 'Stream', icon: Activity },
@@ -47,6 +50,9 @@ function App(): JSX.Element {
   const uiScale = useAgentStore((s) => s.uiScale)
   const mode = useAgentStore((s) => s.mode)
   const toggleMode = useAgentStore((s) => s.toggleMode)
+  const gitModal = useAgentStore((s) => s.gitModal)
+  const activeProject = useAgentStore((s) => s.activeProject)
+  const refreshGitStatus = useAgentStore((s) => s.refreshGitStatus)
   const [activeTab, setActiveTab] = useState<NavTab>('stream')
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [onboardingDone, setOnboardingDone] = useState(() => localStorage.getItem('vibeflow:onboarding-complete') === 'true')
@@ -79,6 +85,27 @@ function App(): JSX.Element {
       console.error('[VIBE:App] checkAuth failed:', err)
     })
   }, [])
+
+  // Restore last active project on startup
+  useEffect(() => {
+    window.api.getActiveProject().then((activePath) => {
+      if (!activePath) return
+      window.api.getProjects().then((projects) => {
+        const match = projects.find((p) => p.path === activePath)
+        if (match) {
+          useAgentStore.getState().setActiveProject(match)
+        }
+      }).catch(() => {})
+    }).catch(() => {})
+  }, [])
+
+  // Poll git status every 10s (only when a project is active)
+  useEffect(() => {
+    if (!activeProject) return
+    refreshGitStatus()
+    const interval = setInterval(refreshGitStatus, 10_000)
+    return () => clearInterval(interval)
+  }, [refreshGitStatus, activeProject])
 
   // Listen for onboarding completion via storage event
   useEffect(() => {
@@ -156,6 +183,7 @@ function App(): JSX.Element {
 
   return (
     <div className="h-screen flex flex-col relative" style={{ background: 'var(--color-base)' }}>
+      {gitModal && <GitModal />}
       {/* macOS titlebar */}
       <div className="h-11 shrink-0 draggable relative flex items-center border-b" style={{ borderColor: 'var(--color-border)' }}>
         <div className="absolute right-4 flex items-center gap-2 select-none">
@@ -325,18 +353,65 @@ function App(): JSX.Element {
           </div>
         </div>
 
+        {/* ── Explorer Column (Projects) ── */}
+        <div
+          className="shrink-0 flex flex-col border-r overflow-hidden"
+          style={{
+            width: '180px',
+            borderColor: 'var(--color-border)',
+            background: 'var(--color-surface)',
+            padding: '10px 8px',
+          }}
+        >
+          <UmbrellaSync />
+        </div>
+
         {/* ── Full Content Area ── */}
         <div className="flex-1 min-h-0 flex flex-col p-3 gap-2.5">
-          {/* Main content — full width, full height */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            {renderTabContent()}
-          </div>
+          {activeProject ? (
+            <>
+              {/* Main content — full width, full height */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {renderTabContent()}
+              </div>
 
-          {/* Bottom: Actions + Command */}
-          <div className="shrink-0 panel glow-cmd flex flex-col gap-2.5">
-            <QuickActions />
-            <CommandBar />
-          </div>
+              {/* Bottom: Actions + Command */}
+              <div className="shrink-0 panel glow-cmd flex flex-col gap-2.5">
+                <QuickActions />
+                <CommandBar />
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center" style={{ maxWidth: '320px' }}>
+                <FolderGit2
+                  size={32}
+                  style={{ color: 'var(--color-text-dim)', margin: '0 auto 12px' }}
+                />
+                <p
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: scaled(16),
+                    fontWeight: 600,
+                    color: 'var(--color-text-muted)',
+                    marginBottom: '8px',
+                  }}
+                >
+                  Select a project to get started
+                </p>
+                <p
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: scaled(12),
+                    color: 'var(--color-text-dim)',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Add a project folder from the Explorer panel, or select an existing one.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

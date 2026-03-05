@@ -27,6 +27,9 @@ export function PlanPanel(): JSX.Element | null {
   const tasks = useAgentStore((s) => s.tasks)
   const planExpanded = useAgentStore((s) => s.planExpanded)
   const togglePlanViewport = useAgentStore((s) => s.togglePlanViewport)
+  const intentPendingApproval = useAgentStore((s) => s.intentPendingApproval)
+  const approveIntent = useAgentStore((s) => s.approveIntent)
+  const rejectIntent = useAgentStore((s) => s.rejectIntent)
 
   const taskList = Object.values(tasks)
   if (taskList.length === 0 || !planExpanded) return null
@@ -141,6 +144,49 @@ export function PlanPanel(): JSX.Element | null {
           ))}
         </div>
       </div>
+
+      {/* Approval buttons */}
+      {intentPendingApproval && (
+        <div
+          className="shrink-0 flex items-center gap-2 px-4 py-3"
+          style={{ borderTop: '1px solid var(--color-border)' }}
+        >
+          <button
+            onClick={approveIntent}
+            style={{
+              flex: 1,
+              fontFamily: 'var(--font-mono)',
+              fontSize: scaled(12),
+              fontWeight: 600,
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              background: 'var(--color-accent)',
+              color: 'var(--color-base)',
+              cursor: 'pointer',
+            }}
+          >
+            Run
+          </button>
+          <button
+            onClick={rejectIntent}
+            style={{
+              flex: 1,
+              fontFamily: 'var(--font-mono)',
+              fontSize: scaled(12),
+              fontWeight: 500,
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: '1px solid var(--color-border)',
+              background: 'transparent',
+              color: 'var(--color-text-dim)',
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   )
 }

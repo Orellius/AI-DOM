@@ -3,6 +3,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   submitIntent: (text: string, options?: unknown) => ipcRenderer.invoke('agent:submit-intent', text, options),
+  approveIntent: () => ipcRenderer.invoke('agent:approve-intent'),
+  rejectIntent: () => ipcRenderer.invoke('agent:reject-intent'),
   cancelTask: (taskId: string) => ipcRenderer.invoke('agent:cancel-task', taskId),
   checkAuth: () => ipcRenderer.invoke('agent:check-auth'),
   getProjects: () => ipcRenderer.invoke('agent:get-projects'),
@@ -31,8 +33,10 @@ const api = {
   checkConnectivity: () => ipcRenderer.invoke('agent:check-connectivity'),
   checkGitHub: () => ipcRenderer.invoke('agent:check-github'),
   githubLogin: () => ipcRenderer.invoke('agent:github-login'),
-  switchProject: (name: string) => ipcRenderer.invoke('agent:switch-project', name),
+  switchProject: (path: string) => ipcRenderer.invoke('agent:switch-project', path),
   getActiveProject: () => ipcRenderer.invoke('agent:get-active-project'),
+  addProject: () => ipcRenderer.invoke('agent:add-project'),
+  removeProject: (path: string) => ipcRenderer.invoke('agent:remove-project', path),
   submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) =>
     ipcRenderer.invoke('agent:submit-chat', text, options),
   cancelChat: () => ipcRenderer.invoke('agent:cancel-chat'),
@@ -59,6 +63,14 @@ const api = {
   getOptimizerConfig: () => ipcRenderer.invoke('agent:get-optimizer-config'),
   updateOptimizerConfig: (categories: unknown[]) =>
     ipcRenderer.invoke('agent:update-optimizer-config', categories),
+  // Git modal
+  getCurrentBranch: () => ipcRenderer.invoke('agent:get-current-branch'),
+  getLocalBranches: () => ipcRenderer.invoke('agent:get-local-branches'),
+  getUnpushedCommits: () => ipcRenderer.invoke('agent:get-unpushed-commits'),
+  getGitStatus: () => ipcRenderer.invoke('agent:get-git-status'),
+  generateCommitMessage: () => ipcRenderer.invoke('agent:generate-commit-message'),
+  commitWithMessage: (message: string) => ipcRenderer.invoke('agent:commit-with-message', message),
+  pushToBranch: (branch: string) => ipcRenderer.invoke('agent:push-to-branch', branch),
 }
 
 if (process.contextIsolated) {

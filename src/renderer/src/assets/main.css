@@ -168,6 +168,31 @@ body::after {
   background: rgba(255, 64, 96, 0.06);
   color: var(--color-red);
 }
+.permission-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.permission-chip-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-scale) * 10px);
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--color-text);
+  background: var(--color-surface-light);
+  border: 1px solid var(--color-border);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.permission-chip-wrap:hover .permission-chip-tooltip {
+  opacity: 1;
+}
 
 /* ── Buttons ── */
 .btn {
@@ -468,4 +493,159 @@ body::after {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-size: calc(var(--ui-scale) * 11px);
+}
+
+/* ═══════════════════════════════════════════════════
+   Git Modal
+   ═══════════════════════════════════════════════════ */
+
+.git-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(6, 6, 10, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.15s ease-out;
+}
+.git-modal-content {
+  width: 440px;
+  max-height: 80vh;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: 14px;
+  padding: 20px;
+  overflow-y: auto;
+  animation: slideUp 0.2s ease-out;
+}
+.git-modal-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-light);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.git-modal-close-btn:hover {
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+.git-modal-file-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-base);
+}
+.git-modal-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+.git-modal-file-row:last-child {
+  border-bottom: none;
+}
+.git-modal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.git-modal-file-path {
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-scale) * 12px);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Resize Handle (horizontal divider) ── */
+.resize-handle-h {
+  position: relative;
+  height: 9px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  touch-action: none;
+}
+.resize-handle-h-bar {
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border);
+  transition: background 0.15s ease, width 0.15s ease;
+}
+.resize-handle-h:hover .resize-handle-h-bar,
+.resize-handle-h:active .resize-handle-h-bar {
+  background: var(--color-border-light);
+  width: 36px;
+}
+
+/* ── Message Context Menu ── */
+.msg-context-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+}
+.msg-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-scale) * 12px);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.msg-context-menu-item:hover {
+  background: var(--color-surface-light);
+}
+
+/* Badge dot on QuickAction buttons */
+.quick-action-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-surface);
+  animation: breathe 2s ease-in-out infinite;
+}
+
+/* Select styling for git modal */
+.git-modal-content select.input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23606878' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+.git-modal-content select.input option {
+  background: var(--color-surface);
+  color: var(--color-text);
 }

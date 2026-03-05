@@ -1,6 +1,6 @@
 import { scaled } from '../utils/scale'
 import { useAgentStore } from '../stores/agentStore'
-import { UmbrellaSync } from './UmbrellaSync'
+import { suggestCheaperModel } from '../utils/tierLimits'
 import { AgentSwarm } from './AgentSwarm'
 import { IntentHistory } from './IntentHistory'
 
@@ -25,8 +25,13 @@ function formatTokenCount(tokens: number): string {
   return String(tokens)
 }
 
-function UsageBar({ label, used, total }: { label: string; used: number; total: number }): JSX.Element {
+function UsageBar({ label, used, total, warning }: { label: string; used: number; total: number; warning?: string | null }): JSX.Element {
   const pct = total > 0 ? Math.min((used / total) * 100, 100) : 0
+  const barColor = pct > 95
+    ? 'var(--color-error, #ef4444)'
+    : pct > 80
+      ? 'var(--color-warning, #f59e0b)'
+      : 'var(--color-accent, #22c55e)'
 
   return (
     <div style={{ marginTop: 6 }}>
@@ -59,17 +64,49 @@ function UsageBar({ label, used, total }: { label: string; used: number; total: 
             width: `${pct}%`,
             height: '100%',
             borderRadius: 3,
-            background: pct > 85 ? 'var(--color-warning, #f59e0b)' : 'var(--color-accent, #22c55e)',
+            background: barColor,
             transition: 'width 0.3s ease',
           }}
         />
       </div>
+      {warning && (
+        <div
+          style={{
+            fontSize: scaled(9),
+            color: pct > 95 ? 'var(--color-error, #ef4444)' : 'var(--color-warning, #f59e0b)',
+            marginTop: 2,
+            fontWeight: 500,
+          }}
+        >
+          {warning}
+        </div>
+      )}
     </div>
+  )
+}
+
+function TierBadge({ label }: { label: string }): JSX.Element {
+  return (
+    <span
+      style={{
+        fontSize: scaled(9),
+        fontWeight: 600,
+        color: 'var(--color-accent, #22c55e)',
+        background: 'color-mix(in srgb, var(--color-accent, #22c55e) 12%, transparent)',
+        borderRadius: 4,
+        padding: '1px 5px',
+        marginLeft: 6,
+        letterSpacing: '0.03em',
+      }}
+    >
+      {label}
+    </span>
   )
 }
 
 function SessionUsageBars(): JSX.Element {
   const usage = useAgentStore((s) => s.sessionUsage)
+  const tierLimits = useAgentStore((s) => s.tierLimits)
   const hasData = usage.model !== '' || usage.costUsd > 0
 
   const displayName = MODEL_DISPLAY_NAMES[usage.model] || usage.model || 'Awaiting response'
@@ -78,9 +115,32 @@ function SessionUsageBars(): JSX.Element {
   const totalTokens = usage.inputTokens + usage.outputTokens
   const contextWindow = usage.contextWindow
 
+  // When tier is known, TOKENS bar uses daily budget; otherwise falls back to contextWindow
+  const tokensDenominator = tierLimits ? tierLimits.dailyTokens : contextWindow
+  const tokensPct = tokensDenominator > 0 ? (totalTokens / tokensDenominator) * 100 : 0
+
+  // Warning text for daily limit
+  let tokensWarning: string | null = null
+  if (tierLimits && tokensPct > 95) {
+    const suggested = suggestCheaperModel(usage.model)
+    const suggestedName = suggested ? (MODEL_DISPLAY_NAMES[suggested] || suggested) : null
+    tokensWarning = suggestedName
+      ? `Near daily limit \u2014 switch to ${suggestedName}`
+      : 'Near daily limit'
+  } else if (tierLimits && tokensPct > 80) {
+    tokensWarning = 'Approaching daily limit'
+  }
+
+  const handleSwitchModel = (): void => {
+    const suggested = suggestCheaperModel(usage.model)
+    if (suggested) {
+      window.api.setModel(suggested)
+    }
+  }
+
   return (
     <div className="px-2 py-1.5">
-      {/* Header: model name + cost */}
+      {/* Header: model name + tier badge + cost */}
       <div
         style={{
           display: 'flex',
@@ -89,13 +149,16 @@ function SessionUsageBars(): JSX.Element {
           fontSize: scaled(11),
         }}
       >
-        <span
-          style={{
-            fontWeight: 600,
-            color: hasData ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-          }}
-        >
-          {displayName}
+        <span style={{ display: 'flex', alignItems: 'baseline' }}>
+          <span
+            style={{
+              fontWeight: 600,
+              color: hasData ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+            }}
+          >
+            {displayName}
+          </span>
+          {tierLimits && <TierBadge label={tierLimits.label} />}
         </span>
         {costLabel && (
           <span
@@ -112,15 +175,38 @@ function SessionUsageBars(): JSX.Element {
 
       {/* Bars */}
       <UsageBar
-        label="TOKENS"
+        label={tierLimits ? 'DAILY USAGE' : 'TOKENS'}
         used={totalTokens}
-        total={contextWindow}
+        total={tokensDenominator}
+        warning={tokensWarning}
       />
       <UsageBar
         label="CONTEXT"
         used={usage.inputTokens}
         total={contextWindow}
       />
+
+      {/* Model switch suggestion at >95% */}
+      {tierLimits && tokensPct > 95 && suggestCheaperModel(usage.model) && (
+        <button
+          onClick={handleSwitchModel}
+          style={{
+            marginTop: 6,
+            width: '100%',
+            padding: '4px 8px',
+            fontSize: scaled(10),
+            fontWeight: 600,
+            color: 'var(--color-text-primary)',
+            background: 'color-mix(in srgb, var(--color-warning, #f59e0b) 15%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 30%, transparent)',
+            borderRadius: 4,
+            cursor: 'pointer',
+            textAlign: 'center',
+          }}
+        >
+          Switch to {MODEL_DISPLAY_NAMES[suggestCheaperModel(usage.model)!] || suggestCheaperModel(usage.model)}
+        </button>
+      )}
     </div>
   )
 }
@@ -131,16 +217,8 @@ export function RightSidebar(): JSX.Element {
       {/* Session Usage */}
       <SessionUsageBars />
 
-      {/* Projects */}
-      <div className="overflow-y-auto shrink-0" style={{ maxHeight: '35%' }}>
-        <UmbrellaSync />
-      </div>
-
-      {/* Divider */}
-      <div className="shrink-0 mx-2 my-1.5" style={{ height: '1px', background: 'var(--color-border)' }} />
-
       {/* Architect + Workers */}
-      <div className="overflow-y-auto shrink-0" style={{ maxHeight: '30%' }}>
+      <div className="overflow-y-auto shrink-0" style={{ maxHeight: '40%' }}>
         <AgentSwarm />
       </div>
 

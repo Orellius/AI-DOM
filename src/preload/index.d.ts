@@ -31,6 +31,7 @@ type AgentEvent =
       cacheReadTokens: number; cacheCreationTokens: number;
       contextWindow: number; model: string }
   | { type: 'chat:error'; error: string }
+  | { type: 'account:info'; email: string | null; subscriptionType: string | null; organization: string | null }
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
   | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
@@ -107,9 +108,11 @@ interface OptimizerConfig {
 
 interface ApiInterface {
   submitIntent: (text: string, options?: IntentOptions) => Promise<void>
+  approveIntent: () => Promise<void>
+  rejectIntent: () => Promise<void>
   cancelTask: (taskId: string) => Promise<void>
   checkAuth: () => Promise<{ installed: boolean; authenticated: boolean }>
-  getProjects: () => Promise<Array<{ name: string; branch: string }>>
+  getProjects: () => Promise<Array<{ name: string; path: string; branch: string }>>
   startLogin: () => Promise<{ success: boolean }>
   onAgentEvent: (cb: (event: AgentEvent) => void) => () => void
   loadClaudeMd: () => Promise<string>
@@ -127,8 +130,10 @@ interface ApiInterface {
   checkConnectivity: () => Promise<{ connected: boolean; version: string | null }>
   checkGitHub: () => Promise<{ authenticated: boolean; username: string | null; remote: string | null }>
   githubLogin: () => Promise<{ started: boolean }>
-  switchProject: (name: string) => Promise<{ success: boolean }>
+  switchProject: (path: string) => Promise<{ success: boolean }>
   getActiveProject: () => Promise<string | null>
+  addProject: () => Promise<{ success: boolean; projects: Array<{ name: string; path: string; branch: string }> }>
+  removeProject: (path: string) => Promise<{ success: boolean }>
   submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) => Promise<void>
   cancelChat: () => Promise<void>
   clearChat: () => Promise<void>
@@ -151,6 +156,14 @@ interface ApiInterface {
   // Model optimizer
   getOptimizerConfig: () => Promise<OptimizerConfig>
   updateOptimizerConfig: (categories: CategoryConfig[]) => Promise<void>
+  // Git modal
+  getCurrentBranch: () => Promise<string | null>
+  getLocalBranches: () => Promise<string[]>
+  getUnpushedCommits: () => Promise<Array<{ hash: string; message: string }>>
+  getGitStatus: () => Promise<{ uncommittedCount: number; unpushedCount: number }>
+  generateCommitMessage: () => Promise<string>
+  commitWithMessage: (message: string) => Promise<{ success: boolean; output: string }>
+  pushToBranch: (branch: string) => Promise<{ success: boolean; output: string }>
 }
 
 declare global {

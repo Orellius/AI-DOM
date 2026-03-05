@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Square } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import type { Permissions } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
@@ -27,8 +27,13 @@ export function CommandBar(): JSX.Element {
   const toggleMode = useAgentStore((s) => s.toggleMode)
   const permissions = useAgentStore((s) => s.permissions)
   const setPermission = useAgentStore((s) => s.setPermission)
+  const cancelAll = useAgentStore((s) => s.cancelAll)
+  const tasks = useAgentStore((s) => s.tasks)
 
-  const isThinking = mode === 'terminal' ? architectStatus === 'thinking' : chatStreaming
+  const hasRunningTasks = Object.values(tasks).some((t) => t.status === 'running')
+  const isThinking = mode === 'terminal'
+    ? (architectStatus === 'thinking' || hasRunningTasks)
+    : chatStreaming
 
   const handleSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
@@ -98,24 +103,46 @@ export function CommandBar(): JSX.Element {
           {isThinking && (
             <>
               <ThinkingIndicator variant="bar" />
-              <div
-                className="animate-breathe"
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); cancelAll() }}
+                title="Stop"
                 style={{
-                  width: '6px',
-                  height: '6px',
-                  borderRadius: '50%',
-                  background: 'var(--color-accent)',
-                  boxShadow: '0 0 8px var(--color-accent)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '4px',
+                  border: 'none',
+                  background: 'rgba(255, 64, 96, 0.12)',
+                  color: 'var(--color-red)',
+                  cursor: 'pointer',
                   flexShrink: 0,
+                  padding: 0,
                 }}
-              />
+              >
+                <Square size={10} fill="currentColor" />
+              </button>
             </>
           )}
         </div>
       </form>
 
-      {/* Mode chips + Permission chips */}
-      <div className="mt-2 flex items-center gap-1.5 pl-6">
+      {/* Mode chips + Permission chips — same flex structure as input row for alignment */}
+      <div className="mt-2 flex items-center gap-3">
+        {/* Spacer matching the > prompt width */}
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: scaled(16),
+            fontWeight: 600,
+            visibility: 'hidden',
+          }}
+        >
+          {mode === 'chat' ? '~' : '>'}
+        </span>
+        <div className="flex items-center gap-1.5">
         {/* Mode chips */}
         <button
           onClick={() => mode !== 'terminal' && toggleMode()}
@@ -130,37 +157,57 @@ export function CommandBar(): JSX.Element {
           Chat
         </button>
 
+        {/* Mode hint */}
         <span
-          className="chip"
           style={{
+            fontSize: scaled(10.5),
             fontFamily: 'var(--font-mono)',
-            fontSize: scaled(11),
             color: 'var(--color-text-muted)',
-            padding: '3px 8px',
-            letterSpacing: '0.05em',
+            letterSpacing: '0.04em',
+            opacity: 0.5,
+            userSelect: 'none',
           }}
         >
-          ⇧ Tab
+          Shift+Tab
         </span>
 
         {/* Divider */}
-        <div style={{ width: '1px', height: '14px', background: 'var(--color-border)', marginRight: '2px' }} />
+        <div style={{ width: '1px', height: '14px', background: 'var(--color-border)', margin: '0 2px' }} />
+
+        {/* Permission hint label */}
+        <span
+          style={{
+            fontSize: scaled(10.5),
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.04em',
+            opacity: 0.5,
+            userSelect: 'none',
+          }}
+        >
+          click to toggle
+        </span>
 
         {/* Permission chips */}
         {PERMISSION_CHIPS.map((chip) => {
           const active = permissions[chip.key]
           const isDanger = chip.danger && active
           return (
-            <button
-              key={chip.key}
-              onClick={() => handlePermissionToggle(chip.key)}
-              className={isDanger ? 'chip chip-danger' : active ? 'chip chip-active' : 'chip'}
-            >
-              {isDanger && <AlertTriangle size={9} />}
-              {chip.label}
-            </button>
+            <span key={chip.key} className="permission-chip-wrap">
+              <button
+                onClick={() => handlePermissionToggle(chip.key)}
+                className={isDanger ? 'chip chip-danger' : active ? 'chip chip-active' : 'chip'}
+              >
+                {isDanger && <AlertTriangle size={9} />}
+                {chip.label}
+              </button>
+              <span className="permission-chip-tooltip">
+                {active ? 'Disable' : 'Enable'} {chip.label.toLowerCase()}
+              </span>
+            </span>
           )
         })}
+        </div>
       </div>
 
       {/* Skip permissions warning */}

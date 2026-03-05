@@ -135,6 +135,7 @@ class StreamInputController implements AsyncIterable<SDKUserMessage> {
 interface QueryHandle {
   streamInput(stream: AsyncIterable<SDKUserMessage>): Promise<void>
   setModel(model?: string): Promise<void>
+  accountInfo(): Promise<{ email?: string; organization?: string; subscriptionType?: string }>
   close(): void
   [Symbol.asyncIterator](): AsyncIterator<unknown>
 }
@@ -272,6 +273,16 @@ export class SessionManager extends EventEmitter {
     this.chatQuery = q
 
     q.streamInput(controller).catch(() => {})
+
+    // Fire-and-forget: fetch account info for tier detection (non-fatal)
+    q.accountInfo().then((info) => {
+      this.emitEvent({
+        type: 'account:info',
+        email: info.email ?? null,
+        subscriptionType: info.subscriptionType ?? null,
+        organization: info.organization ?? null,
+      })
+    }).catch(() => {}) // Tier just won't be shown if this fails
 
     this.chatConsumerRunning = true
     this.consumeChat(q).catch(() => {})

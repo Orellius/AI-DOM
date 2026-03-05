@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events'
 import { ChildProcess, spawn, execFileSync, spawnSync } from 'child_process'
-import { readdirSync, readFileSync, statSync } from 'fs'
-import { join, dirname } from 'path'
+import { readFileSync, statSync } from 'fs'
+import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { ClaudeCli } from './claude-cli'
 import { SessionManager } from './session-manager'
@@ -21,6 +21,8 @@ import type { LspLanguage } from './lsp-bridge'
 import { ContextFilter } from './context-filter'
 import { profileProject, profileToSystemPromptClause } from './project-profiler'
 import type { ProjectProfile } from './project-profiler'
+import { WorkspaceConfigManager } from './workspace-config'
+import type { ProjectEntry } from './workspace-config'
 
 // Safe env allowlist — mirrors session-manager.ts
 const SAFE_ENV_KEYS = [
@@ -66,6 +68,7 @@ export type AgentEvent =
       cacheReadTokens: number; cacheCreationTokens: number;
       contextWindow: number; model: string }
   | { type: 'chat:error'; error: string }
+  | { type: 'account:info'; email: string | null; subscriptionType: string | null; organization: string | null }
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
   | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
@@ -110,6 +113,9 @@ export class AgentOrchestrator extends EventEmitter {
   private contextFilter: ContextFilter
   private projectProfile: ProjectProfile | null = null
 
+  // Workspace config (persistent project list)
+  private workspaceConfig: WorkspaceConfigManager
+
   // Multi-provider support
   private providerManager: ProviderManager
   private modelOptimizer: ModelOptimizer
@@ -122,6 +128,7 @@ export class AgentOrchestrator extends EventEmitter {
     super()
     this.sessionManager = new SessionManager()
     this.commandGuard = new CommandGuard()
+    this.workspaceConfig = new WorkspaceConfigManager()
     this.lspBridge = new LspBridge(this.getCwd())
     this.contextFilter = ContextFilter.load(this.getCwd())
 
@@ -333,7 +340,24 @@ export class AgentOrchestrator extends EventEmitter {
       this.emitEvent({ type: 'task:created', task })
     }
     this.emitEvent({ type: 'architect:done', tasks: subtasks })
+    // Don't auto-execute — wait for user approval via approveIntent()
+  }
+
+  approveIntent(): void {
     this.scheduleNext()
+  }
+
+  rejectIntent(): void {
+    // Cancel all pending tasks
+    for (const [id, task] of this.tasks) {
+      if (task.status === 'pending') {
+        task.status = 'failed'
+        task.completedAt = Date.now()
+      }
+    }
+    this.tasks.clear()
+    this.runningCount = 0
+    this.emitEvent({ type: 'architect:done', tasks: [] })
   }
 
   cancelTask(taskId: string): void {
@@ -419,28 +443,133 @@ export class AgentOrchestrator extends EventEmitter {
   getFileChanges(): Array<{ path: string; type: 'created' | 'modified' | 'deleted' }> {
     try {
       const cwd = this.getCwd()
-      // Try diff against previous commit first, fall back to staged changes
-      let output = ''
-      try {
-        output = execFileSync('git', ['diff', '--name-status', 'HEAD~1', 'HEAD'], { cwd, stdio: 'pipe' }).toString().trim()
-      } catch {
-        output = execFileSync('git', ['diff', '--name-status', '--cached'], { cwd, stdio: 'pipe' }).toString().trim()
-      }
-
+      const output = execFileSync('git', ['status', '--porcelain'], { cwd, stdio: 'pipe' }).toString().trim()
       if (!output) return []
 
       return output.split('\n').map((line) => {
-        const [status, ...pathParts] = line.split('\t')
-        const path = pathParts.join('\t')
-        const typeMap: Record<string, 'created' | 'modified' | 'deleted'> = {
-          A: 'created',
-          M: 'modified',
-          D: 'deleted'
-        }
-        return { path, type: typeMap[status] || 'modified' }
+        const xy = line.slice(0, 2)
+        const filePath = line.slice(3)
+        let type: 'created' | 'modified' | 'deleted' = 'modified'
+        if (xy.includes('D')) type = 'deleted'
+        else if (xy.includes('?') || xy.includes('A')) type = 'created'
+        return { path: filePath, type }
       }).filter((f) => f.path)
     } catch {
       return []
+    }
+  }
+
+  // --- Git status & branch methods ---
+
+  getCurrentBranch(): string | null {
+    try {
+      const cwd = this.getCwd()
+      return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, stdio: 'pipe' }).toString().trim() || null
+    } catch {
+      return null
+    }
+  }
+
+  getLocalBranches(): string[] {
+    try {
+      const cwd = this.getCwd()
+      const output = execFileSync('git', ['branch', '--format=%(refname:short)'], { cwd, stdio: 'pipe' }).toString().trim()
+      return output ? output.split('\n').filter(Boolean) : []
+    } catch {
+      return []
+    }
+  }
+
+  getUnpushedCommits(): Array<{ hash: string; message: string }> {
+    try {
+      const cwd = this.getCwd()
+      const output = execFileSync('git', ['log', '@{u}..HEAD', '--oneline'], { cwd, stdio: 'pipe' }).toString().trim()
+      if (!output) return []
+      return output.split('\n').map((line) => {
+        const spaceIdx = line.indexOf(' ')
+        return { hash: line.slice(0, spaceIdx), message: line.slice(spaceIdx + 1) }
+      })
+    } catch {
+      // No upstream set or other error — return empty
+      return []
+    }
+  }
+
+  getGitStatus(): { uncommittedCount: number; unpushedCount: number } {
+    try {
+      const cwd = this.getCwd()
+      let uncommittedCount = 0
+      let unpushedCount = 0
+
+      try {
+        const statusOutput = execFileSync('git', ['status', '--porcelain'], { cwd, stdio: 'pipe' }).toString().trim()
+        if (statusOutput) uncommittedCount = statusOutput.split('\n').length
+      } catch { /* ignore */ }
+
+      try {
+        const logOutput = execFileSync('git', ['log', '@{u}..HEAD', '--oneline'], { cwd, stdio: 'pipe' }).toString().trim()
+        if (logOutput) unpushedCount = logOutput.split('\n').length
+      } catch { /* no upstream — leave 0 */ }
+
+      return { uncommittedCount, unpushedCount }
+    } catch {
+      return { uncommittedCount: 0, unpushedCount: 0 }
+    }
+  }
+
+  commitWithMessage(message: string): { success: boolean; output: string } {
+    try {
+      const cwd = this.getCwd()
+      execFileSync('git', ['add', '-A'], { cwd, stdio: 'pipe' })
+      const status = execFileSync('git', ['status', '--porcelain'], { cwd, stdio: 'pipe' }).toString().trim()
+      if (!status) return { success: true, output: 'Nothing to commit' }
+      const result = spawnSync('git', ['commit', '-m', message], { cwd, stdio: 'pipe', timeout: 30_000 })
+      const out = (result.stdout?.toString() || '') + (result.stderr?.toString() || '')
+      return { success: result.status === 0, output: out.slice(-500) || 'Changes committed' }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { success: false, output: msg.slice(-500) }
+    }
+  }
+
+  async generateCommitMessage(): Promise<string> {
+    try {
+      const cwd = this.getCwd()
+      const status = execFileSync('git', ['status', '--porcelain'], { cwd, stdio: 'pipe' }).toString().trim()
+      if (!status) return ''
+
+      // Get diff stats + truncated content for context
+      let diffInfo = ''
+      try {
+        const stat = execFileSync('git', ['diff', '--stat', 'HEAD'], { cwd, stdio: 'pipe' }).toString().trim()
+        const content = execFileSync('git', ['diff', 'HEAD'], { cwd, stdio: 'pipe' }).toString().trim()
+        diffInfo = `Diff stats:\n${stat}\n\nDiff content (truncated):\n${content.slice(0, 3000)}`
+      } catch {
+        diffInfo = `Files:\n${status}`
+      }
+
+      const prompt = `${diffInfo}`
+      const systemPrompt = 'Generate a concise git commit message following conventional commits format: type: description (max 72 chars). Types: feat, fix, refactor, chore, docs, style, perf, test. Output ONLY the commit message line, nothing else — no quotes, no explanation.'
+
+      const result = await this.sessionManager.runArchitect(prompt, systemPrompt)
+      return result.trim().replace(/^["'`]|["'`]$/g, '').split('\n')[0].slice(0, 200)
+    } catch {
+      return ''
+    }
+  }
+
+  pushToBranch(branch: string): { success: boolean; output: string } {
+    if (!/^[a-zA-Z0-9._\-/]+$/.test(branch)) {
+      return { success: false, output: 'Invalid branch name' }
+    }
+    try {
+      const cwd = this.getCwd()
+      const result = spawnSync('git', ['push', 'origin', branch], { cwd, stdio: 'pipe', timeout: 30_000 })
+      const out = (result.stdout?.toString() || '') + (result.stderr?.toString() || '')
+      return { success: result.status === 0, output: out.slice(-500) || 'Pushed successfully' }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { success: false, output: msg.slice(-500) }
     }
   }
 
@@ -567,9 +696,9 @@ export class AgentOrchestrator extends EventEmitter {
           return { success: true, output: 'Changes committed' }
         }
         case 'test': {
-          const result = spawnSync('pnpm', ['test'], { cwd, stdio: 'pipe', timeout: 60_000 })
+          const result = spawnSync('npx', ['vitest', 'run', '--passWithNoTests'], { cwd, stdio: 'pipe', timeout: 60_000 })
           const out = (result.stdout?.toString() || '') + (result.stderr?.toString() || '')
-          return { success: result.status === 0, output: out.slice(-500) }
+          return { success: result.status === 0, output: out.slice(-500) || 'No test files found' }
         }
         case 'push': {
           return this.gitPush()
@@ -635,52 +764,75 @@ export class AgentOrchestrator extends EventEmitter {
   }
 
   getActiveProject(): string | null {
-    const cwd = this.getCwd()
-    return cwd.split('/').pop() ?? null
+    return this.workspaceConfig.getActiveProjectPath()
   }
 
-  switchProject(name: string): { success: boolean } {
-    const workspaceDir = dirname(process.cwd())
-    const targetPath = join(workspaceDir, name)
+  switchProject(absolutePath: string): { success: boolean } {
     try {
-      const stat = statSync(targetPath)
+      const stat = statSync(absolutePath)
       if (!stat.isDirectory()) return { success: false }
-      // Verify it's a git project
-      statSync(join(targetPath, '.git'))
-      process.chdir(targetPath)
-      // Refresh intelligence for the new project
+
+      // 1. Stop dev server if running
+      this.stopDevServer()
+
+      // 2. Kill any active workers
+      this.sessionManager.cancelChat()
+      this.sessionManager.cancelNonAnthropicChat()
+      for (const [taskId, proc] of this.processes) {
+        proc.kill('SIGTERM')
+        this.processes.delete(taskId)
+      }
+      this.runningCount = 0
+      this.tasks.clear()
+
+      // 3. Change working directory
+      process.chdir(absolutePath)
+
+      // 4. Persist active project
+      this.workspaceConfig.setActiveProject(absolutePath)
+
+      // 5. Refresh intelligence for new project
       this.refreshIntelligence()
+
       return { success: true }
     } catch {
       return { success: false }
     }
   }
 
-  getProjects(): Array<{ name: string; branch: string }> {
-    const workspaceDir = dirname(process.cwd())
-    const projects: Array<{ name: string; branch: string }> = []
+  getProjects(): ProjectEntry[] {
+    return this.workspaceConfig.getProjects()
+  }
+
+  addProject(absolutePath: string): { success: boolean; projects: ProjectEntry[] } {
     try {
-      const entries = readdirSync(workspaceDir)
-      for (const entry of entries) {
-        const fullPath = join(workspaceDir, entry)
-        try {
-          const gitPath = join(fullPath, '.git')
-          if (statSync(fullPath).isDirectory() && statSync(gitPath).isDirectory()) {
-            let branch = 'unknown'
-            try {
-              const head = readFileSync(join(gitPath, 'HEAD'), 'utf8').trim()
-              branch = head.startsWith('ref: refs/heads/') ? head.slice(16) : head.slice(0, 8)
-            } catch { /* ignore */ }
-            projects.push({ name: entry, branch })
-          }
-        } catch {
-          // no .git or not a directory
-        }
-      }
+      const projects = this.workspaceConfig.addProject(absolutePath)
+      return { success: true, projects }
     } catch {
-      // workspace dir not readable
+      return { success: false, projects: this.workspaceConfig.getProjects() }
     }
-    return projects
+  }
+
+  removeProject(absolutePath: string): { success: boolean } {
+    try {
+      const isActive = this.workspaceConfig.getActiveProjectPath() === absolutePath
+      if (isActive) {
+        // Cleanup before removing active project
+        this.stopDevServer()
+        this.sessionManager.cancelChat()
+        this.sessionManager.cancelNonAnthropicChat()
+        for (const [taskId, proc] of this.processes) {
+          proc.kill('SIGTERM')
+          this.processes.delete(taskId)
+        }
+        this.runningCount = 0
+        this.tasks.clear()
+      }
+      this.workspaceConfig.removeProject(absolutePath)
+      return { success: true }
+    } catch {
+      return { success: false }
+    }
   }
 
   // --- Chat mode (SDK-native persistent sessions) ---

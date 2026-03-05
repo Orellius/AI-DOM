@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Wrench, FileText, AlertCircle, Zap } from 'lucide-react'
+import { Wrench, FileText, AlertCircle, Zap, Eraser } from 'lucide-react'
 import { useAgentStore, ActivityEntry } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
 import { ModeSwitchBanner } from './ModeSwitchBanner'
@@ -40,6 +40,7 @@ const typeStyles: Record<ActivityEntry['type'], { text: string; icon: string; bg
 export function ActivityStream(): JSX.Element {
   const activityLog = useAgentStore((s) => s.activityLog)
   const retryTask = useAgentStore((s) => s.retryTask)
+  const clearActivityLog = useAgentStore((s) => s.clearActivityLog)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -68,12 +69,23 @@ export function ActivityStream(): JSX.Element {
           }}
         />
         <span className="label">Stream</span>
-        <span
-          className="ml-auto"
-          style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(12), color: 'var(--color-text-dim)' }}
-        >
-          {activityLog.length}
-        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <span
+            style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(12), color: 'var(--color-text-dim)' }}
+          >
+            {activityLog.length}
+          </span>
+          {activityLog.length > 0 && (
+            <button
+              onClick={clearActivityLog}
+              className="btn"
+              style={{ fontSize: scaled(10), padding: '1px 6px', gap: '3px' }}
+            >
+              <Eraser size={10} />
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Log */}

@@ -54,6 +54,14 @@ export function registerIpcHandlers(
     }
   })
 
+  ipcMain.handle('agent:approve-intent', () => {
+    orchestrator.approveIntent()
+  })
+
+  ipcMain.handle('agent:reject-intent', () => {
+    orchestrator.rejectIntent()
+  })
+
   ipcMain.handle('agent:cancel-task', (_event, taskId: unknown) => {
     if (typeof taskId !== 'string' || !taskId.trim()) {
       throw new Error('Invalid task ID')
@@ -138,6 +146,37 @@ export function registerIpcHandlers(
     return orchestrator.getFileChanges()
   })
 
+  ipcMain.handle('agent:get-current-branch', () => {
+    return orchestrator.getCurrentBranch()
+  })
+
+  ipcMain.handle('agent:get-local-branches', () => {
+    return orchestrator.getLocalBranches()
+  })
+
+  ipcMain.handle('agent:get-unpushed-commits', () => {
+    return orchestrator.getUnpushedCommits()
+  })
+
+  ipcMain.handle('agent:get-git-status', () => {
+    return orchestrator.getGitStatus()
+  })
+
+  ipcMain.handle('agent:generate-commit-message', async () => {
+    return orchestrator.generateCommitMessage()
+  })
+
+  ipcMain.handle('agent:commit-with-message', (_event, message: unknown) => {
+    const validated = validateString(message, 'commit message', 500)
+    return orchestrator.commitWithMessage(validated)
+  })
+
+  ipcMain.handle('agent:push-to-branch', (_event, branch: unknown) => {
+    const validated = validateString(branch, 'branch name', 200)
+    if (!/^[a-zA-Z0-9._\-/]+$/.test(validated)) throw new Error('Invalid branch name')
+    return orchestrator.pushToBranch(validated)
+  })
+
   ipcMain.handle('agent:create-snapshot', (_event, intent: unknown) => {
     if (typeof intent !== 'string') throw new Error('Intent must be a string')
     return orchestrator.createSnapshot(intent)
@@ -164,15 +203,32 @@ export function registerIpcHandlers(
     return orchestrator.runQuickAction(validated)
   })
 
-  ipcMain.handle('agent:switch-project', (_event, name: unknown) => {
-    if (typeof name !== 'string' || !name.trim()) throw new Error('Invalid project name')
-    // Prevent path traversal
-    if (name.includes('/') || name.includes('..')) throw new Error('Invalid project name')
-    return orchestrator.switchProject(name)
+  ipcMain.handle('agent:switch-project', (_event, absolutePath: unknown) => {
+    if (typeof absolutePath !== 'string' || !absolutePath.trim()) throw new Error('Invalid project path')
+    // Must be an absolute path
+    if (!absolutePath.startsWith('/')) throw new Error('Path must be absolute')
+    return orchestrator.switchProject(absolutePath)
   })
 
   ipcMain.handle('agent:get-active-project', () => {
     return orchestrator.getActiveProject()
+  })
+
+  ipcMain.handle('agent:add-project', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Add Project Folder',
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, projects: orchestrator.getProjects() }
+    }
+    return orchestrator.addProject(result.filePaths[0])
+  })
+
+  ipcMain.handle('agent:remove-project', (_event, absolutePath: unknown) => {
+    if (typeof absolutePath !== 'string' || !absolutePath.trim()) throw new Error('Invalid project path')
+    if (!absolutePath.startsWith('/')) throw new Error('Path must be absolute')
+    return orchestrator.removeProject(absolutePath)
   })
 
   // --- Chat mode ---

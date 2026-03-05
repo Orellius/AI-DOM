@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { Node, Edge } from '@xyflow/react'
 import { detectBuildIntent } from '../utils/intentDetection'
+import { getTierLimits } from '../utils/tierLimits'
+import type { TierLimits } from '../utils/tierLimits'
 
 // --- Shared types (must match orchestrator AgentEvent) ---
 
@@ -35,6 +37,7 @@ export type AgentEvent =
       cacheReadTokens: number; cacheCreationTokens: number;
       contextWindow: number; model: string }
   | { type: 'chat:error'; error: string }
+  | { type: 'account:info'; email: string | null; subscriptionType: string | null; organization: string | null }
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
   | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
@@ -167,6 +170,9 @@ interface AgentState {
   chatStreaming: boolean
   modeSwitchPrompt: ModeSwitchPrompt
 
+  // Task approval gate
+  intentPendingApproval: boolean
+
   // Plan viewport
   planExpanded: boolean
 
@@ -206,9 +212,20 @@ interface AgentState {
     branch: string | null
   } | null
 
+  // Subscription tier
+  accountInfo: { email: string | null; subscriptionType: string | null; organization: string | null } | null
+  tierLimits: TierLimits | null
+
   // Security state
   permissionTier: 'normal' | 'bypass'
   pendingDangerousCommands: PendingDangerousCommand[]
+
+  // Active project (null = no project selected)
+  activeProject: { name: string; path: string; branch: string } | null
+
+  // Git modal state
+  gitStatus: { uncommittedCount: number; unpushedCount: number; currentBranch: string | null }
+  gitModal: 'commit' | 'push' | null
 
   // Existing actions
   handleEvent: (event: AgentEvent) => void
@@ -223,6 +240,9 @@ interface AgentState {
   toggleMode: () => void
   submitChat: (text: string) => void
   clearChat: () => void
+  deleteMessage: (id: string) => void
+  editAndReprompt: (id: string, newContent: string) => void
+  clearActivityLog: () => void
   showModeSwitchPrompt: (direction: ModeSwitchPrompt['direction']) => void
   dismissModeSwitchPrompt: () => void
   acceptModeSwitchPrompt: () => void
@@ -231,6 +251,13 @@ interface AgentState {
   setUIScale: (scale: number) => void
   setGitHub: (status: Partial<GitHubStatus>) => void
   setClaudeConnectivity: (status: Partial<ClaudeConnectivity>) => void
+
+  // Approval gate actions
+  approveIntent: () => void
+  rejectIntent: () => void
+
+  // Stop/cancel action
+  cancelAll: () => void
 
   // Plan viewport actions
   togglePlanViewport: () => void
@@ -251,6 +278,15 @@ interface AgentState {
   setPermissionTier: (tier: 'normal' | 'bypass') => void
   approveDangerousCommand: (id: string) => void
   rejectDangerousCommand: (id: string) => void
+
+  // Project actions
+  switchProject: (project: { name: string; path: string; branch: string }) => void
+  setActiveProject: (project: { name: string; path: string; branch: string } | null) => void
+
+  // Git modal actions
+  refreshGitStatus: () => void
+  openGitModal: (type: 'commit' | 'push') => void
+  closeGitModal: () => void
 }
 
 export const useAgentStore = create<AgentState>()((set, get) => ({
@@ -268,6 +304,9 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   chatSessionId: null,
   chatStreaming: false,
   modeSwitchPrompt: { visible: false, direction: 'to-terminal', lastDismissed: 0 },
+
+  // Task approval gate
+  intentPendingApproval: false,
 
   // Plan viewport
   planExpanded: false,
@@ -300,9 +339,20 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   // Intelligence defaults
   projectProfile: null,
 
+  // Subscription tier defaults
+  accountInfo: null,
+  tierLimits: null,
+
   // Security defaults
   permissionTier: 'bypass',
   pendingDangerousCommands: [],
+
+  // Active project default
+  activeProject: null,
+
+  // Git modal defaults
+  gitStatus: { uncommittedCount: 0, unpushedCount: 0, currentBranch: null },
+  gitModal: null,
 
   handleEvent: (event) => {
     console.log('[VIBE:Store] handleEvent:', event.type, event)
@@ -324,9 +374,12 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       case 'architect:done':
         set((state) => {
           const convId = state.currentConversationId
+          const hasTasks = event.tasks.length > 0
           return {
             architectStatus: 'done',
             tasks: Object.fromEntries(event.tasks.map((t) => [t.id, t])),
+            intentPendingApproval: hasTasks,
+            planExpanded: hasTasks ? true : state.planExpanded,
             conversationHistory: state.conversationHistory.map((c) =>
               c.id === convId ? { ...c, status: 'running' as const, taskCount: event.tasks.length } : c
             )
@@ -503,7 +556,28 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
               toolCalls: [...last.toolCalls, { name: event.name, input: event.input }]
             }
           }
-          return { chatMessages: msgs }
+          // Dedup activity: collapse consecutive tool calls within 2s into one row
+          const log = [...state.activityLog]
+          const lastEntry = log[log.length - 1]
+          const now = Date.now()
+          if (lastEntry && lastEntry.type === 'tool_call' && (now - lastEntry.timestamp) < 2000) {
+            // Append tool name to existing entry
+            log[log.length - 1] = {
+              ...lastEntry,
+              content: `${lastEntry.content} → ${event.name}`,
+            }
+          } else {
+            log.push({
+              id: `act-${++activityCounter}`,
+              timestamp: now,
+              type: 'tool_call',
+              tool: event.name,
+              content: event.name,
+            })
+            // Cap at 500
+            if (log.length > 500) log.splice(0, log.length - 500)
+          }
+          return { chatMessages: msgs, activityLog: log }
         })
         break
 
@@ -568,6 +642,21 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
           return { chatMessages: msgs, chatStreaming: false }
         })
         break
+
+      // --- Account info (tier detection) ---
+
+      case 'account:info': {
+        const limits = getTierLimits(event.subscriptionType)
+        set({
+          accountInfo: {
+            email: event.email,
+            subscriptionType: event.subscriptionType,
+            organization: event.organization,
+          },
+          tierLimits: limits,
+        })
+        break
+      }
 
       // --- Dangerous command events ---
 
@@ -685,6 +774,39 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     })
   },
 
+  // Approval gate actions
+  approveIntent: () => {
+    set({ intentPendingApproval: false })
+    window.api.approveIntent().catch((err: unknown) => {
+      console.error('[VIBE:Store] approveIntent error:', err)
+    })
+  },
+
+  rejectIntent: () => {
+    set({ intentPendingApproval: false, tasks: {}, architectStatus: 'idle' })
+    window.api.rejectIntent().catch((err: unknown) => {
+      console.error('[VIBE:Store] rejectIntent error:', err)
+    })
+    get().addActivity({ type: 'system', content: 'Intent rejected by user' })
+  },
+
+  // Stop/cancel all
+  cancelAll: () => {
+    const { mode, chatStreaming, tasks } = get()
+    if (mode === 'chat' && chatStreaming) {
+      window.api.cancelChat().catch(() => {})
+      set({ chatStreaming: false })
+    }
+    if (mode === 'terminal') {
+      for (const task of Object.values(tasks)) {
+        if (task.status === 'running') {
+          window.api.cancelTask(task.id).catch(() => {})
+        }
+      }
+    }
+    get().addActivity({ type: 'system', content: 'Cancelled by user' })
+  },
+
   // Plan viewport
   togglePlanViewport: () => {
     set((state) => ({ planExpanded: !state.planExpanded }))
@@ -737,6 +859,70 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   clearChat: () => {
     window.api.clearChat().catch(() => { /* ignore */ })
     set({ chatMessages: [], chatSessionId: null, chatStreaming: false })
+  },
+
+  deleteMessage: (id) => {
+    set((state) => ({
+      chatMessages: state.chatMessages.filter((m) => m.id !== id)
+    }))
+  },
+
+  editAndReprompt: (id, newContent) => {
+    const { chatMessages } = get()
+    const idx = chatMessages.findIndex((m) => m.id === id)
+    if (idx === -1) return
+
+    // Truncate everything from this message onward, replace with edited content
+    const truncated = chatMessages.slice(0, idx)
+
+    // Clear the existing session so the AI sees the corrected history
+    window.api.clearChat().catch(() => {})
+
+    set({
+      chatMessages: [
+        ...truncated,
+        {
+          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: 'user' as const,
+          content: newContent,
+          toolCalls: [],
+          timestamp: Date.now(),
+        }
+      ],
+      chatSessionId: null,
+      chatStreaming: true,
+    })
+
+    // Re-submit
+    const { permissions, settings } = get()
+    const allowedTools: string[] = []
+    if (permissions.files) allowedTools.push('Read', 'Write', 'Edit')
+    if (permissions.terminal) allowedTools.push('Bash')
+    if (permissions.search) allowedTools.push('Glob', 'Grep')
+
+    window.api.submitChat(newContent, {
+      allowedTools: permissions.skipPermissions ? undefined : (allowedTools.length > 0 ? allowedTools : undefined),
+      maxTurns: settings.maxTurns,
+    }).catch((err: unknown) => {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      set((state) => ({
+        chatStreaming: false,
+        chatMessages: [
+          ...state.chatMessages,
+          {
+            id: `msg-err-${Date.now()}`,
+            role: 'assistant' as const,
+            content: `Error: ${errMsg}`,
+            toolCalls: [],
+            timestamp: Date.now(),
+          }
+        ]
+      }))
+    })
+  },
+
+  clearActivityLog: () => {
+    set({ activityLog: [] })
   },
 
   // --- Display & connectivity actions ---
@@ -878,6 +1064,76 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     window.api.rejectDangerousCommand(id).catch((err: unknown) => {
       console.error('[VIBE:Store] rejectDangerousCommand error:', err)
     })
+  },
+
+  // --- Project actions ---
+
+  switchProject: (project) => {
+    window.api.switchProject(project.path).then((result) => {
+      if (result.success) {
+        // Full state reset for project isolation
+        set({
+          activeProject: project,
+          tasks: {},
+          chatMessages: [],
+          chatSessionId: null,
+          chatStreaming: false,
+          activityLog: [],
+          fileChanges: [],
+          snapshots: [],
+          sessionUsage: {
+            inputTokens: 0, outputTokens: 0,
+            cacheReadTokens: 0, cacheCreationTokens: 0,
+            contextWindow: 0, costUsd: 0, model: '',
+          },
+          projectProfile: null,
+          gitStatus: { uncommittedCount: 0, unpushedCount: 0, currentBranch: null },
+          devServer: { running: false, url: null, output: [], command: null },
+          pendingDangerousCommands: [],
+          architectStatus: 'idle',
+          intentPendingApproval: false,
+          gitModal: null,
+          conversationHistory: [],
+          currentConversationId: null,
+        })
+        // Refresh git status for the new project
+        get().refreshGitStatus()
+        get().fetchProjectProfile()
+      }
+    }).catch((err: unknown) => {
+      console.error('[VIBE:Store] switchProject error:', err)
+    })
+  },
+
+  setActiveProject: (project) => {
+    set({ activeProject: project })
+  },
+
+  // --- Git modal actions ---
+
+  refreshGitStatus: () => {
+    // No-op if no project is active
+    if (!get().activeProject) return
+    Promise.all([
+      window.api.getGitStatus(),
+      window.api.getCurrentBranch(),
+    ]).then(([status, branch]) => {
+      set({
+        gitStatus: {
+          uncommittedCount: status.uncommittedCount,
+          unpushedCount: status.unpushedCount,
+          currentBranch: branch,
+        }
+      })
+    }).catch(() => { /* ignore */ })
+  },
+
+  openGitModal: (type) => {
+    set({ gitModal: type })
+  },
+
+  closeGitModal: () => {
+    set({ gitModal: null })
   },
 
   // --- Graph (unchanged) ---

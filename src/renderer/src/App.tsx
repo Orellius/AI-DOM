@@ -100,7 +100,27 @@ function App(): JSX.Element {
   const renderTabContent = (): JSX.Element => {
     switch (activeTab) {
       case 'stream':
-        return <ActivityStream />
+        return (
+          <div className="flex gap-2.5 h-full min-h-0">
+            {/* Left: Threads + Swarm */}
+            <div className="flex flex-col gap-2.5 min-h-0 overflow-hidden" style={{ width: '220px', flexShrink: 0 }}>
+              <div className="panel overflow-y-auto shrink-0 max-h-[38%]">
+                <ConversationThread />
+              </div>
+              <div className="panel overflow-y-auto flex-1 min-h-0">
+                <AgentSwarm />
+              </div>
+            </div>
+            {/* Center: Activity (Build) or Chat — same column, mode switches content */}
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {mode === 'chat' ? <ChatPanel /> : <ActivityStream />}
+            </div>
+            {/* Right: Projects */}
+            <div className="panel overflow-hidden" style={{ width: '250px', flexShrink: 0 }}>
+              <Sidebar />
+            </div>
+          </div>
+        )
       case 'graph':
         return (
           <div className="panel glow-accent h-full overflow-hidden">
@@ -309,7 +329,7 @@ function App(): JSX.Element {
         <div className="flex-1 min-h-0 flex flex-col p-3 gap-2.5">
           {/* Main content — full width, full height */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            {mode === 'chat' ? <ChatPanel /> : renderTabContent()}
+            {renderTabContent()}
           </div>
 
           {/* Bottom: Actions + Command */}

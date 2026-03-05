@@ -27,7 +27,7 @@ export function AgentSwarm(): JSX.Element {
             }`}
           />
         </div>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(13), color: 'var(--color-text-dim)', marginTop: '4px' }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(12), color: 'var(--color-text-dim)', marginTop: '4px' }}>
           {architectStatus === 'idle'
             ? 'Awaiting intent'
             : architectStatus === 'thinking'
@@ -40,7 +40,7 @@ export function AgentSwarm(): JSX.Element {
       <div className="flex-1 overflow-y-auto">
         <p className="label mb-2">Workers</p>
         {running.length === 0 ? (
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(13), color: 'var(--color-text-dim)' }}>
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(12), color: 'var(--color-text-dim)' }}>
             No active workers
           </p>
         ) : (
@@ -56,7 +56,7 @@ export function AgentSwarm(): JSX.Element {
               >
                 <div className="flex items-start gap-2">
                   <Cpu size={12} style={{ color: 'var(--color-text-muted)', marginTop: '2px', flexShrink: 0 }} />
-                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(13), lineHeight: '1.4', color: 'var(--color-text)' }}>
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(12), lineHeight: '1.4', color: 'var(--color-text)' }}>
                     {task.description}
                   </p>
                 </div>
@@ -79,7 +79,7 @@ export function AgentSwarm(): JSX.Element {
         <div className="pt-3 mt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
           <div className="flex items-center gap-2">
             <CheckCircle2 size={12} style={{ color: 'var(--color-accent)' }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(13), color: 'var(--color-text-muted)' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(12), color: 'var(--color-text-muted)' }}>
               {completedCount}/{taskList.length}
             </span>
             {/* Progress bar */}

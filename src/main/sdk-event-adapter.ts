@@ -32,6 +32,18 @@ interface SDKResultMsg extends SDKMessageBase {
   num_turns?: number
   session_id: string
   errors?: string[]
+  usage?: {
+    input_tokens: number
+    output_tokens: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+  }
+  modelUsage?: Record<string, {
+    inputTokens: number
+    outputTokens: number
+    contextWindow: number
+    costUSD: number
+  }>
 }
 
 type SDKMsg = SDKSystemMsg | SDKAssistantMsg | SDKResultMsg | SDKMessageBase
@@ -75,10 +87,22 @@ export function adaptChatMessage(msg: unknown): AgentEvent[] {
       const res = m as SDKResultMsg
       if (res.subtype === 'success') {
         if (typeof res.total_cost_usd === 'number') {
+          // Derive model + contextWindow from modelUsage (first key = primary model)
+          const modelEntries = res.modelUsage ? Object.entries(res.modelUsage) : []
+          const primaryModel = modelEntries.length > 0 ? modelEntries[0][0] : ''
+          const primaryEntry = modelEntries.length > 0 ? modelEntries[0][1] : null
+          const contextWindow = primaryEntry?.contextWindow ?? 0
+
           events.push({
             type: 'chat:cost',
             costUsd: res.total_cost_usd,
-            turns: res.num_turns ?? 0
+            turns: res.num_turns ?? 0,
+            inputTokens: res.usage?.input_tokens ?? 0,
+            outputTokens: res.usage?.output_tokens ?? 0,
+            cacheReadTokens: res.usage?.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: res.usage?.cache_creation_input_tokens ?? 0,
+            contextWindow,
+            model: primaryModel,
           })
         }
         events.push({ type: 'chat:done' })

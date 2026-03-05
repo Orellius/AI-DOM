@@ -2,8 +2,9 @@
 
 ## Core Engine
 - **SDK Session Engine** — Persistent Claude sessions via `@anthropic-ai/claude-agent-sdk` `query()` + `streamInput()`. First message ~3s, follow-ups sub-second (no process respawn)
-- **SessionManager** (`src/main/session-manager.ts`) — Singleton managing chat sessions, architect calls, and worker tasks through the SDK
+- **SessionManager** (`src/main/session-manager.ts`) — Singleton managing chat sessions (Anthropic SDK + non-Anthropic streaming), architect calls, and worker tasks
 - **SDK Event Adapter** (`src/main/sdk-event-adapter.ts`) — Translates SDK `SDKMessage` types to internal `AgentEvent` types
+- **Multi-Provider Chat** — Non-Anthropic providers use lightweight streaming chat with full message history per request. Anthropic retains full SDK path with persistent sessions and tool use
 
 ## Agent Orchestration
 - **Architect Decomposition** — Sonnet-powered intent → task array decomposition (one-shot, no tools)
@@ -22,10 +23,16 @@
 - **Undo** — Restore to any snapshot via `git reset --hard`
 - **File Change Detection** — `git diff` after task completion
 
+## Intelligence Layer
+- **Auto-Project Profiling** (`src/main/project-profiler.ts`) — Scans project root on boot and `switchProject()`. Detects language (TS/JS/Rust/Python/Go), framework (Next/Vite/Tauri/Electron/FastAPI/Django/etc.), package manager (pnpm/npm/yarn/bun/cargo/poetry), dev/build/test commands, git branch, entry files. Profile injected into system prompt and displayed in RightSidebar
+- **Context Exclusion** (`src/main/context-filter.ts`) — Reads `.vibeflowignore` (gitignore syntax) from project root. Homegrown glob matcher supports `*`, `**`, `?`, `dir/` trailing slash, `!` negation. Generates system prompt clause instructing agent to avoid excluded paths
+- **LSP Bridge** (`src/main/lsp-bridge.ts`) — Detects project language, spawns appropriate LSP server (typescript-language-server, rust-analyzer, gopls, pyright) via JSON-RPC over stdio. Collects `publishDiagnostics` notifications, caches per-file, formats error/warning summary for system prompt injection. Gracefully skips if binary not installed
+- **System Prompt Append Chain** — SessionManager's `buildAppendPrompt()` composes: `GUARDRAILS + projectProfile + diagnostics + exclusions`. Each clause only appended when non-empty
+
 ## Dev Tools
 - **Dev Server** — Spawn/kill dev server from UI
 - **Quick Actions** — Commit, test, push, run, undo
-- **Project Switching** — Navigate between workspace projects
+- **Project Switching** — Navigate between workspace projects (triggers intelligence refresh)
 
 ## Security
 - **Safe Env Allowlist** — Only PATH, HOME, USER, SHELL, LANG, TERM, NODE_ENV, EDITOR, TERM_PROGRAM passed to SDK sessions (no API key/token leaks)
@@ -52,6 +59,35 @@
 - **IPC Bridge** — Secure context-isolated communication with validation
 - **Guardrails** — Safety system prompt on every SDK call
 - **Input Validation** — Size limits, tool whitelist, path validation, enum validation
+
+## Multi-LLM Provider System
+- **Provider Registry** (`src/main/providers/types.ts`) — Core types: `ProviderId` (anthropic/openai/google/ollama), `ModelDefinition`, `ProviderConfig`, `LlmClient` interface with streaming + non-streaming overloads
+- **Model Catalog** (`src/main/providers/model-catalog.ts`) — Static registry of all cloud models with metadata (cost tier, context window, capabilities, pricing). Anthropic: Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6. OpenAI: GPT-4o Mini, GPT-4o, o3 Mini, o3. Google: Gemini 2.0 Flash, 2.5 Pro. Ollama: dynamic discovery
+- **Provider Manager** (`src/main/providers/provider-manager.ts`) — Load/save config to `~/.vibeflow/providers.json`, API keys encrypted via Electron `safeStorage` (OS keychain), connection testing per provider, Ollama auto-detection via `/api/tags`
+- **Homegrown LLM Clients** — 4 direct HTTP clients (no third-party SDKs):
+  - `anthropic-client.ts` — SDK wrapper implementing LlmClient for classification calls
+  - `openai-client.ts` — Direct `fetch()` to OpenAI Chat Completions API, SSE streaming parser
+  - `google-client.ts` — Direct `fetch()` to Gemini API, SSE streaming with role mapping
+  - `ollama-client.ts` — Direct `fetch()` to local Ollama, NDJSON streaming parser
+
+## Model Optimizer
+- **Task Classification** (`src/main/model-optimizer.ts`) — Uses a cheap model (Haiku/GPT-4o-mini) to classify user intent into 6 categories: Communication, Coding, Research, Analysis, Classification, General
+- **Two-Tier Routing** — Each category has a default model (cheap/fast) and an escalation model (more capable, used on retry). Routing table persisted to `~/.vibeflow/model-optimizer.json`
+- **Model Optimizer UI** (`src/renderer/src/components/ModelOptimizer.tsx`) — Full nav tab ("Optimizer") with:
+  - 3x2 grid of category cards
+  - Each card: icon + label + description + default/escalation model dropdowns
+  - Cost tier badges (Cheap=green, Mid=amber, Premium=purple)
+  - Dropdowns filtered to connected providers only
+  - "Apply" button with save confirmation
+
+## Onboarding (Redesigned)
+- **6-Step Flow:** Welcome → Provider Selection → Auth → GitHub → Optimizer Setup → Done
+- **Provider Selection** — Grid of 4 provider cards with brand colors: Anthropic (coral), OpenAI (green), Google (blue), Ollama (orange). Multi-select supported
+- **Per-Provider Auth:**
+  - Anthropic: OAuth via `claude login` (existing flow)
+  - OpenAI/Google: API key input with show/hide toggle + inline connection test
+  - Ollama: Auto-detected if running, one-click connect
+- **Critical Fix:** 5s timeout on auth check (prevents infinite spinner), ESC key to skip, macOS titlebar padding (traffic light buttons accessible)
 
 ## Workspace Integration
 - `/vibeflow` skill in umbrella `.claude/skills/vibeflow/SKILL.md`

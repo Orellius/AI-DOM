@@ -11,7 +11,7 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['@electron-toolkit/preload'] })],
     build: {
       outDir: 'dist/preload'
     }

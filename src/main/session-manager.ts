@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events'
 import type { AgentEvent } from './orchestrator'
 import { adaptChatMessage, adaptWorkerMessage } from './sdk-event-adapter'
+import type { LlmClient, ChatMessage as LlmChatMessage, ChatChunk, ProviderId } from './providers/types'
+import { getModelById } from './providers/model-catalog'
 
 // Lazy-load the SDK via dynamic import() — required because the package
 // is ESM-only (.mjs) and Electron's main process runs as CJS.
@@ -139,6 +141,12 @@ interface QueryHandle {
 
 // --- SessionManager ---
 
+interface IntelligenceContext {
+  projectProfile?: string
+  diagnostics?: string
+  exclusions?: string
+}
+
 interface ChatSessionOpts {
   prompt: string
   cwd?: string
@@ -147,6 +155,7 @@ interface ChatSessionOpts {
   allowedTools?: string[]
   model?: string
   resume?: string
+  intelligence?: IntelligenceContext
 }
 
 interface WorkerOpts {
@@ -154,6 +163,7 @@ interface WorkerOpts {
   cwd?: string
   allowedTools?: string[]
   maxTurns?: number
+  intelligence?: IntelligenceContext
 }
 
 export type PermissionTier = 'normal' | 'bypass'
@@ -166,6 +176,38 @@ export class SessionManager extends EventEmitter {
   private workerSessions = new Map<string, { query: QueryHandle; abort: AbortController }>()
   private currentModel: string | undefined
   permissionTier: PermissionTier = 'bypass' // default bypass to preserve current UX
+
+  // Multi-provider support
+  private llmClients = new Map<ProviderId, LlmClient>()
+  private nonAnthropicChatHistory: LlmChatMessage[] = []
+  private nonAnthropicAbort: AbortController | null = null
+  private nonAnthropicActive = false
+
+  /** Register an LLM client for a provider. */
+  registerClient(providerId: ProviderId, client: LlmClient): void {
+    this.llmClients.set(providerId, client)
+  }
+
+  /** Get the provider for a model ID. */
+  private getProviderForModel(modelId: string): ProviderId {
+    const model = getModelById(modelId)
+    return model?.provider ?? 'anthropic'
+  }
+
+  /** Check if a model uses a non-Anthropic provider. */
+  private isNonAnthropicModel(modelId?: string): boolean {
+    if (!modelId) return false
+    return this.getProviderForModel(modelId) !== 'anthropic'
+  }
+
+  /** Build the full system prompt append string from guardrails + intelligence context. */
+  private buildAppendPrompt(intelligence?: IntelligenceContext): string {
+    let append = GUARDRAIL_SYSTEM_PROMPT
+    if (intelligence?.projectProfile) append += '\n\n' + intelligence.projectProfile
+    if (intelligence?.diagnostics) append += '\n\n' + intelligence.diagnostics
+    if (intelligence?.exclusions) append += '\n\n' + intelligence.exclusions
+    return append
+  }
 
   hasChatSession(): boolean {
     return this.chatQuery !== null && this.chatConsumerRunning
@@ -191,7 +233,7 @@ export class SessionManager extends EventEmitter {
     const controller = new StreamInputController()
     this.inputController = controller
 
-    // Use the Claude Code preset system prompt with guardrails appended —
+    // Use the Claude Code preset system prompt with guardrails + intelligence appended —
     // a raw string would replace the tool system prompt and break tools
     const sdkOpts: Record<string, unknown> = {
       cwd: opts.cwd || process.cwd(),
@@ -199,7 +241,7 @@ export class SessionManager extends EventEmitter {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: GUARDRAIL_SYSTEM_PROMPT,
+        append: this.buildAppendPrompt(opts.intelligence),
       },
       settingSources: ['user', 'project'],
       tools: { type: 'preset', preset: 'claude_code' },
@@ -246,6 +288,102 @@ export class SessionManager extends EventEmitter {
       message: { role: 'user', content: text },
       parent_tool_use_id: null
     })
+  }
+
+  /** Initialize a chat session with a non-Anthropic provider (stateless, full history per request). */
+  async initNonAnthropicChat(opts: ChatSessionOpts): Promise<void> {
+    this.teardownNonAnthropicChat()
+
+    const modelId = opts.model || this.currentModel
+    if (!modelId) throw new Error('No model specified for non-Anthropic chat')
+
+    const providerId = this.getProviderForModel(modelId)
+    const client = this.llmClients.get(providerId)
+    if (!client) throw new Error(`No client registered for provider: ${providerId}`)
+
+    this.nonAnthropicActive = true
+    this.nonAnthropicAbort = new AbortController()
+
+    // Build system message from guardrails + intelligence
+    const systemContent = this.buildAppendPrompt(opts.intelligence)
+    this.nonAnthropicChatHistory = [
+      { role: 'system', content: systemContent },
+      { role: 'user', content: opts.prompt },
+    ]
+
+    this.emitEvent({ type: 'chat:session', sessionId: `${providerId}-${Date.now()}` })
+    await this.consumeNonAnthropicStream(client, modelId)
+  }
+
+  /** Send a follow-up message to a non-Anthropic chat session. */
+  async sendNonAnthropicMessage(text: string): Promise<void> {
+    const modelId = this.currentModel
+    if (!modelId || !this.nonAnthropicActive) throw new Error('NO_SESSION')
+
+    const providerId = this.getProviderForModel(modelId)
+    const client = this.llmClients.get(providerId)
+    if (!client) throw new Error(`No client registered for provider: ${providerId}`)
+
+    this.nonAnthropicAbort = new AbortController()
+    this.nonAnthropicChatHistory.push({ role: 'user', content: text })
+    await this.consumeNonAnthropicStream(client, modelId)
+  }
+
+  private async consumeNonAnthropicStream(client: LlmClient, modelId: string): Promise<void> {
+    try {
+      const stream = client.chat({
+        messages: [...this.nonAnthropicChatHistory],
+        model: modelId,
+        stream: true,
+        signal: this.nonAnthropicAbort?.signal,
+      }) as AsyncIterable<ChatChunk>
+
+      let fullContent = ''
+      for await (const chunk of stream) {
+        if (!this.nonAnthropicActive) break
+
+        if (chunk.type === 'text' && chunk.content) {
+          fullContent += chunk.content
+          this.emitEvent({ type: 'chat:text', content: chunk.content })
+        } else if (chunk.type === 'error' && chunk.error) {
+          this.emitEvent({ type: 'chat:error', error: chunk.error })
+          return
+        }
+      }
+
+      // Store assistant response in history for context
+      if (fullContent) {
+        this.nonAnthropicChatHistory.push({ role: 'assistant', content: fullContent })
+      }
+      this.emitEvent({ type: 'chat:done' })
+    } catch (err) {
+      if (this.nonAnthropicActive) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        this.emitEvent({ type: 'chat:error', error: errMsg })
+      }
+    }
+  }
+
+  hasNonAnthropicSession(): boolean {
+    return this.nonAnthropicActive
+  }
+
+  cancelNonAnthropicChat(): void {
+    this.teardownNonAnthropicChat()
+    this.emitEvent({ type: 'chat:done' })
+  }
+
+  private teardownNonAnthropicChat(): void {
+    this.nonAnthropicActive = false
+    if (this.nonAnthropicAbort) {
+      this.nonAnthropicAbort.abort()
+      this.nonAnthropicAbort = null
+    }
+  }
+
+  clearNonAnthropicChat(): void {
+    this.teardownNonAnthropicChat()
+    this.nonAnthropicChatHistory = []
   }
 
   async runArchitect(intent: string, systemPrompt?: string): Promise<string> {
@@ -301,7 +439,7 @@ export class SessionManager extends EventEmitter {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: GUARDRAIL_SYSTEM_PROMPT,
+        append: this.buildAppendPrompt(opts.intelligence),
       },
       maxTurns: opts.maxTurns || 10,
       abortController: abort,
@@ -372,6 +510,7 @@ export class SessionManager extends EventEmitter {
 
   destroy(): void {
     this.teardownChat()
+    this.teardownNonAnthropicChat()
     for (const [, session] of this.workerSessions) {
       session.abort.abort()
       session.query.close()

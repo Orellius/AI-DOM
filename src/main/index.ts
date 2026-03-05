@@ -57,6 +57,15 @@ app.whenReady().then(() => {
   const orchestrator = new AgentOrchestrator()
   registerIpcHandlers(orchestrator, mainWindow)
 
+  // Dev utility: set VIBE_RESET_ONBOARDING=1 to force re-show onboarding
+  if (process.env['VIBE_RESET_ONBOARDING'] === '1') {
+    mainWindow.webContents.on('did-finish-load', () => {
+      mainWindow.webContents.executeJavaScript(
+        'localStorage.removeItem("vibeflow:onboarding-complete"); location.reload();'
+      ).catch(() => {})
+    })
+  }
+
   // Clean shutdown: destroy SDK sessions before quit
   app.on('before-quit', () => {
     orchestrator.destroy()

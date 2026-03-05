@@ -218,4 +218,70 @@ export function registerIpcHandlers(
   ipcMain.handle('agent:list-snapshots', () => {
     return orchestrator.getSnapshotHistory()
   })
+
+  // --- Onboarding reset (dev utility) ---
+
+  ipcMain.handle('agent:reset-onboarding', () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.executeJavaScript(
+        'localStorage.removeItem("vibeflow:onboarding-complete"); true'
+      ).catch(() => {})
+    }
+    return { reset: true }
+  })
+
+  // --- Intelligence Layer ---
+
+  ipcMain.handle('agent:get-project-profile', () => {
+    return orchestrator.getProjectProfile()
+  })
+
+  ipcMain.handle('agent:get-lsp-status', () => {
+    return orchestrator.getLspStatus()
+  })
+
+  ipcMain.handle('agent:get-diagnostics', () => {
+    return orchestrator.getDiagnosticsSummary()
+  })
+
+  ipcMain.handle('agent:get-ignore-patterns', () => {
+    return orchestrator.getIgnorePatterns()
+  })
+
+  // --- Provider Management ---
+
+  ipcMain.handle('agent:get-providers', () => {
+    return orchestrator.getProviders()
+  })
+
+  ipcMain.handle('agent:get-connected-models', () => {
+    return orchestrator.getConnectedModels()
+  })
+
+  ipcMain.handle('agent:test-provider-connection', async (_event, providerId: unknown, apiKey: unknown) => {
+    if (typeof providerId !== 'string') throw new Error('Provider ID must be a string')
+    const key = typeof apiKey === 'string' ? apiKey : undefined
+    return orchestrator.testProviderConnection(providerId as 'anthropic' | 'openai' | 'google' | 'ollama', key)
+  })
+
+  ipcMain.handle('agent:set-provider-api-key', (_event, providerId: unknown, apiKey: unknown) => {
+    if (typeof providerId !== 'string') throw new Error('Provider ID must be a string')
+    if (typeof apiKey !== 'string') throw new Error('API key must be a string')
+    orchestrator.setProviderApiKey(providerId as 'anthropic' | 'openai' | 'google' | 'ollama', apiKey)
+  })
+
+  ipcMain.handle('agent:detect-ollama-models', async () => {
+    return orchestrator.detectOllamaModels()
+  })
+
+  // --- Model Optimizer ---
+
+  ipcMain.handle('agent:get-optimizer-config', () => {
+    return orchestrator.getOptimizerConfig()
+  })
+
+  ipcMain.handle('agent:update-optimizer-config', (_event, categories: unknown) => {
+    if (!Array.isArray(categories)) throw new Error('Categories must be an array')
+    orchestrator.updateOptimizerConfig(categories)
+  })
 }

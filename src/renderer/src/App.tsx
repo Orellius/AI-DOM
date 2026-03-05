@@ -10,6 +10,7 @@ import {
   CreditCard,
   PanelLeftClose,
   PanelLeftOpen,
+  Sliders,
 } from 'lucide-react'
 import { useAgentStore } from './stores/agentStore'
 import { useAgentEvents } from './hooks/useAgentEvents'
@@ -25,6 +26,7 @@ import { DevServerPanel } from './components/DevServerPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { ProfileBuilder } from './components/ProfileBuilder'
 import { ChatPanel } from './components/ChatPanel'
+import { ModelOptimizer } from './components/ModelOptimizer'
 
 const NAV_ITEMS = [
   { id: 'stream', label: 'Stream', icon: Activity },
@@ -32,6 +34,7 @@ const NAV_ITEMS = [
   { id: 'changes', label: 'Changes', icon: FileCode2 },
   { id: 'server', label: 'Server', icon: Server },
   { id: 'config', label: 'Config', icon: Settings },
+  { id: 'optimizer', label: 'Optimizer', icon: Sliders },
   { id: 'profile', label: 'Profile', icon: Sparkles },
 ] as const
 
@@ -134,6 +137,12 @@ function App(): JSX.Element {
         return (
           <div className="panel h-full overflow-hidden">
             <SettingsPanel />
+          </div>
+        )
+      case 'optimizer':
+        return (
+          <div className="panel h-full overflow-hidden">
+            <ModelOptimizer />
           </div>
         )
       case 'profile':

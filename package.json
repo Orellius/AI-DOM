@@ -25,10 +25,13 @@
     "vite": "^6.0.7"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.69",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "@xyflow/react": "^12.10.1",
+    "dompurify": "^3.3.1",
     "lucide-react": "^0.577.0",
+    "marked": "^17.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.11"

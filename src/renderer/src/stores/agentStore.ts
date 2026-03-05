@@ -30,7 +30,10 @@ export type AgentEvent =
   | { type: 'chat:text'; content: string }
   | { type: 'chat:tool-use'; name: string; input: string }
   | { type: 'chat:done' }
-  | { type: 'chat:cost'; costUsd: number; turns: number }
+  | { type: 'chat:cost'; costUsd: number; turns: number;
+      inputTokens: number; outputTokens: number;
+      cacheReadTokens: number; cacheCreationTokens: number;
+      contextWindow: number; model: string }
   | { type: 'chat:error'; error: string }
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
@@ -105,7 +108,7 @@ export interface Permissions {
 export interface Settings {
   concurrency: number
   maxTurns: number
-  model: 'default' | 'sonnet' | 'opus' | 'haiku'
+  model: string // model ID or 'default'
   cwd: string
 }
 
@@ -180,6 +183,29 @@ interface AgentState {
   devServer: DevServerState
   snapshots: Snapshot[]
 
+  // Session usage (tokens + cost)
+  sessionUsage: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    contextWindow: number
+    costUsd: number
+    model: string
+  }
+
+  // Intelligence layer
+  projectProfile: {
+    name: string
+    language: string
+    framework: string | null
+    packageManager: string | null
+    devCommand: string | null
+    buildCommand: string | null
+    testCommand: string | null
+    branch: string | null
+  } | null
+
   // Security state
   permissionTier: 'normal' | 'bypass'
   pendingDangerousCommands: PendingDangerousCommand[]
@@ -217,6 +243,9 @@ interface AgentState {
   setDevServer: (state: Partial<DevServerState>) => void
   addDevServerOutput: (line: string) => void
   refreshFileChanges: () => void
+
+  // Intelligence actions
+  fetchProjectProfile: () => void
 
   // Security actions
   setPermissionTier: (tier: 'normal' | 'bypass') => void
@@ -260,6 +289,16 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   fileChanges: [],
   devServer: { running: false, url: null, output: [], command: null },
   snapshots: [],
+
+  // Session usage defaults
+  sessionUsage: {
+    inputTokens: 0, outputTokens: 0,
+    cacheReadTokens: 0, cacheCreationTokens: 0,
+    contextWindow: 0, costUsd: 0, model: '',
+  },
+
+  // Intelligence defaults
+  projectProfile: null,
 
   // Security defaults
   permissionTier: 'bypass',
@@ -423,7 +462,14 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       // --- Chat events ---
 
       case 'chat:session':
-        set({ chatSessionId: event.sessionId })
+        set({
+          chatSessionId: event.sessionId,
+          sessionUsage: {
+            inputTokens: 0, outputTokens: 0,
+            cacheReadTokens: 0, cacheCreationTokens: 0,
+            contextWindow: 0, costUsd: 0, model: '',
+          },
+        })
         break
 
       case 'chat:text':
@@ -462,7 +508,7 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         break
 
       case 'chat:cost':
-        // Store cost info on the last assistant message for future UI display
+        // Store cost info on the last assistant message
         set((state) => {
           const msgs = [...state.chatMessages]
           for (let i = msgs.length - 1; i >= 0; i--) {
@@ -471,7 +517,20 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
               break
             }
           }
-          return { chatMessages: msgs }
+          // Accumulate session usage
+          const prev = state.sessionUsage
+          return {
+            chatMessages: msgs,
+            sessionUsage: {
+              inputTokens: prev.inputTokens + event.inputTokens,
+              outputTokens: prev.outputTokens + event.outputTokens,
+              cacheReadTokens: prev.cacheReadTokens + event.cacheReadTokens,
+              cacheCreationTokens: prev.cacheCreationTokens + event.cacheCreationTokens,
+              contextWindow: event.contextWindow || prev.contextWindow,
+              costUsd: event.costUsd, // total_cost_usd is already cumulative from SDK
+              model: event.model || prev.model,
+            },
+          }
         })
         break
 
@@ -775,6 +834,27 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     window.api.getFileChanges().then((changes) => {
       if (changes && changes.length > 0) {
         set({ fileChanges: changes })
+      }
+    }).catch(() => { /* ignore */ })
+  },
+
+  // --- Intelligence actions ---
+
+  fetchProjectProfile: () => {
+    window.api.getProjectProfile().then((profile) => {
+      if (profile) {
+        set({
+          projectProfile: {
+            name: profile.name,
+            language: profile.language,
+            framework: profile.framework,
+            packageManager: profile.packageManager,
+            devCommand: profile.devCommand,
+            buildCommand: profile.buildCommand,
+            testCommand: profile.testCommand,
+            branch: profile.branch,
+          }
+        })
       }
     }).catch(() => { /* ignore */ })
   },

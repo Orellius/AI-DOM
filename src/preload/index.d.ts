@@ -26,7 +26,10 @@ type AgentEvent =
   | { type: 'chat:text'; content: string }
   | { type: 'chat:tool-use'; name: string; input: string }
   | { type: 'chat:done' }
-  | { type: 'chat:cost'; costUsd: number; turns: number }
+  | { type: 'chat:cost'; costUsd: number; turns: number;
+      inputTokens: number; outputTokens: number;
+      cacheReadTokens: number; cacheCreationTokens: number;
+      contextWindow: number; model: string }
   | { type: 'chat:error'; error: string }
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
@@ -47,6 +50,59 @@ interface SnapshotInfo {
   intent: string
   timestamp: number
   commitHash: string
+}
+
+interface ProjectProfile {
+  name: string
+  language: 'typescript' | 'javascript' | 'rust' | 'python' | 'go' | 'unknown'
+  framework: string | null
+  packageManager: 'pnpm' | 'npm' | 'yarn' | 'bun' | 'cargo' | 'poetry' | 'pip' | null
+  devCommand: string | null
+  buildCommand: string | null
+  testCommand: string | null
+  hasGit: boolean
+  branch: string | null
+  entryFiles: string[]
+}
+
+interface LspStatus {
+  running: boolean
+  language: 'typescript' | 'javascript' | 'rust' | 'go' | 'python' | null
+  diagnosticCount: number
+}
+
+interface ProviderInfo {
+  id: string
+  name: string
+  authType: string
+  isConnected: boolean
+  modelCount: number
+}
+
+interface ModelInfo {
+  id: string
+  provider: string
+  displayName: string
+  costTier: 'cheap' | 'mid' | 'premium'
+  contextWindow: number
+  supportsTools: boolean
+  supportsStreaming: boolean
+  inputCostPer1M: number
+  outputCostPer1M: number
+}
+
+interface CategoryConfig {
+  category: string
+  label: string
+  description: string
+  icon: string
+  defaultModel: string
+  escalationModel: string
+}
+
+interface OptimizerConfig {
+  categories: CategoryConfig[]
+  models: Array<{ id: string; provider: string; displayName: string; costTier: string }>
 }
 
 interface ApiInterface {
@@ -81,6 +137,20 @@ interface ApiInterface {
   approveDangerousCommand: (id: string) => Promise<void>
   rejectDangerousCommand: (id: string) => Promise<void>
   listSnapshots: () => Promise<SnapshotInfo[]>
+  resetOnboarding: () => Promise<{ reset: boolean }>
+  getProjectProfile: () => Promise<ProjectProfile | null>
+  getLspStatus: () => Promise<LspStatus>
+  getDiagnostics: () => Promise<string>
+  getIgnorePatterns: () => Promise<string[]>
+  // Provider management
+  getProvidersList: () => Promise<ProviderInfo[]>
+  getConnectedModels: () => Promise<ModelInfo[]>
+  testProviderConnection: (providerId: string, apiKey?: string) => Promise<{ connected: boolean }>
+  setProviderApiKey: (providerId: string, apiKey: string) => Promise<void>
+  detectOllamaModels: () => Promise<ModelInfo[]>
+  // Model optimizer
+  getOptimizerConfig: () => Promise<OptimizerConfig>
+  updateOptimizerConfig: (categories: CategoryConfig[]) => Promise<void>
 }
 
 declare global {

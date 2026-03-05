@@ -7,6 +7,20 @@ import { ClaudeCli } from './claude-cli'
 import { SessionManager } from './session-manager'
 import type { PermissionTier } from './session-manager'
 import { CommandGuard } from './command-guard'
+import { ProviderManager } from './providers/provider-manager'
+import { ModelOptimizer } from './model-optimizer'
+import type { CategoryConfig, TaskCategory } from './model-optimizer'
+import type { ProviderId, ModelDefinition } from './providers/types'
+import { AnthropicClient } from './providers/clients/anthropic-client'
+import { OpenAIClient } from './providers/clients/openai-client'
+import { GoogleClient } from './providers/clients/google-client'
+import { OllamaClient } from './providers/clients/ollama-client'
+import { getModelById } from './providers/model-catalog'
+import { LspBridge } from './lsp-bridge'
+import type { LspLanguage } from './lsp-bridge'
+import { ContextFilter } from './context-filter'
+import { profileProject, profileToSystemPromptClause } from './project-profiler'
+import type { ProjectProfile } from './project-profiler'
 
 // Safe env allowlist — mirrors session-manager.ts
 const SAFE_ENV_KEYS = [
@@ -47,7 +61,10 @@ export type AgentEvent =
   | { type: 'chat:text'; content: string }
   | { type: 'chat:tool-use'; name: string; input: string }
   | { type: 'chat:done' }
-  | { type: 'chat:cost'; costUsd: number; turns: number }
+  | { type: 'chat:cost'; costUsd: number; turns: number;
+      inputTokens: number; outputTokens: number;
+      cacheReadTokens: number; cacheCreationTokens: number;
+      contextWindow: number; model: string }
   | { type: 'chat:error'; error: string }
   | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
   | { type: 'dangerous-command:approved'; id: string; command: string }
@@ -89,11 +106,46 @@ export class AgentOrchestrator extends EventEmitter {
   private sessionManager: SessionManager
   private commandGuard: CommandGuard
   private snapshotHistory: Array<{ id: string; intent: string; timestamp: number; commitHash: string }> = []
+  private lspBridge: LspBridge
+  private contextFilter: ContextFilter
+  private projectProfile: ProjectProfile | null = null
+
+  // Multi-provider support
+  private providerManager: ProviderManager
+  private modelOptimizer: ModelOptimizer
+  private anthropicClient: AnthropicClient
+  private openaiClient: OpenAIClient | null = null
+  private googleClient: GoogleClient | null = null
+  private ollamaClient: OllamaClient
 
   constructor() {
     super()
     this.sessionManager = new SessionManager()
     this.commandGuard = new CommandGuard()
+    this.lspBridge = new LspBridge(this.getCwd())
+    this.contextFilter = ContextFilter.load(this.getCwd())
+
+    // Initialize provider system
+    this.providerManager = new ProviderManager()
+    this.modelOptimizer = new ModelOptimizer()
+
+    // Initialize clients
+    this.anthropicClient = new AnthropicClient()
+    this.ollamaClient = new OllamaClient(this.providerManager.getBaseUrl('ollama'))
+    this.sessionManager.registerClient('anthropic', this.anthropicClient)
+    this.sessionManager.registerClient('ollama', this.ollamaClient)
+
+    // Initialize API key-based clients if keys are available
+    this.initializeClients()
+
+    // Set classification client for model optimizer (use Anthropic by default)
+    this.modelOptimizer.setClassificationClient(this.anthropicClient, 'claude-haiku-4-5')
+
+    // Auto-detect Anthropic connection via Claude CLI (async, non-blocking)
+    this.detectAnthropicAuth()
+
+    // Profile the initial project
+    this.refreshIntelligence()
     // Forward all SessionManager events to orchestrator listeners
     this.sessionManager.on('event', (event: AgentEvent) => {
       this.emitEvent(event)
@@ -108,6 +160,107 @@ export class AgentOrchestrator extends EventEmitter {
     this.commandGuard.on('command:rejected', (data) => {
       this.emit('event', { type: 'dangerous-command:rejected', ...data })
     })
+  }
+
+  /** Check Claude CLI auth on startup and mark Anthropic as connected if authenticated. */
+  private detectAnthropicAuth(): void {
+    ClaudeCli.checkAuth().then((result) => {
+      if (result.authenticated) {
+        this.providerManager.setConnected('anthropic', true)
+      }
+    }).catch(() => {
+      // Non-fatal — Anthropic just won't be marked connected
+    })
+  }
+
+  /** Initialize API-key based clients from saved provider config. */
+  private initializeClients(): void {
+    const openaiKey = this.providerManager.getApiKey('openai')
+    if (openaiKey) {
+      this.openaiClient = new OpenAIClient(openaiKey)
+      this.sessionManager.registerClient('openai', this.openaiClient)
+    }
+
+    const googleKey = this.providerManager.getApiKey('google')
+    if (googleKey) {
+      this.googleClient = new GoogleClient(googleKey)
+      this.sessionManager.registerClient('google', this.googleClient)
+    }
+  }
+
+  // --- Provider & Optimizer public API ---
+
+  getProviders(): Array<{ id: string; name: string; authType: string; isConnected: boolean; modelCount: number }> {
+    return this.providerManager.getAllProviders().map((p) => ({
+      id: p.id,
+      name: p.name,
+      authType: p.authType,
+      isConnected: p.isConnected,
+      modelCount: p.models.length,
+    }))
+  }
+
+  getConnectedModels(): ModelDefinition[] {
+    return this.providerManager.getConnectedModels()
+  }
+
+  async testProviderConnection(providerId: ProviderId, apiKey?: string): Promise<{ connected: boolean }> {
+    // Anthropic uses CLI OAuth, not API keys — check auth directly
+    if (providerId === 'anthropic') {
+      try {
+        const result = await ClaudeCli.checkAuth()
+        if (result.authenticated) {
+          this.providerManager.setConnected('anthropic', true)
+          return { connected: true }
+        }
+        return { connected: false }
+      } catch {
+        return { connected: false }
+      }
+    }
+
+    if (apiKey) {
+      this.providerManager.setApiKey(providerId, apiKey)
+    }
+    const connected = await this.providerManager.testConnection(providerId)
+    if (connected) {
+      this.providerManager.setConnected(providerId, true)
+      this.initializeClients()
+    }
+    return { connected }
+  }
+
+  setProviderApiKey(providerId: ProviderId, apiKey: string): void {
+    this.providerManager.setApiKey(providerId, apiKey)
+    this.providerManager.setConnected(providerId, true)
+    this.initializeClients()
+  }
+
+  async detectOllamaModels(): Promise<ModelDefinition[]> {
+    return this.providerManager.detectOllamaModels()
+  }
+
+  getOptimizerConfig(): { categories: CategoryConfig[]; models: Array<{ id: string; provider: string; displayName: string; costTier: string }> } {
+    const categories = this.modelOptimizer.getRoutingTable()
+    const models = this.providerManager.getConnectedModels().map((m) => ({
+      id: m.id,
+      provider: m.provider,
+      displayName: m.displayName,
+      costTier: m.costTier,
+    }))
+    return { categories, models }
+  }
+
+  updateOptimizerConfig(categories: CategoryConfig[]): void {
+    this.modelOptimizer.updateRoutingTable(categories)
+  }
+
+  getModelOptimizer(): ModelOptimizer {
+    return this.modelOptimizer
+  }
+
+  getProviderManager(): ProviderManager {
+    return this.providerManager
   }
 
   getCwd(): string {
@@ -434,6 +587,53 @@ export class AgentOrchestrator extends EventEmitter {
     }
   }
 
+  // --- Intelligence Layer ---
+
+  /** Refresh all intelligence modules for the current cwd. */
+  private refreshIntelligence(): void {
+    const cwd = this.getCwd()
+    this.projectProfile = profileProject(cwd)
+    this.contextFilter = ContextFilter.load(cwd)
+    // Start LSP in background (non-blocking)
+    this.lspBridge.startServer(cwd).catch((err) => {
+      console.warn('[VIBE:Orchestrator] LSP start failed (non-fatal):', err)
+    })
+  }
+
+  /** Build the intelligence context object for SessionManager. */
+  private getIntelligenceContext(): { projectProfile?: string; diagnostics?: string; exclusions?: string } {
+    const ctx: { projectProfile?: string; diagnostics?: string; exclusions?: string } = {}
+
+    if (this.projectProfile) {
+      const clause = profileToSystemPromptClause(this.projectProfile)
+      if (clause) ctx.projectProfile = clause
+    }
+
+    const diagSummary = this.lspBridge.getDiagnosticsSummary()
+    if (diagSummary) ctx.diagnostics = diagSummary
+
+    const exclusionClause = this.contextFilter.toSystemPromptClause()
+    if (exclusionClause) ctx.exclusions = exclusionClause
+
+    return ctx
+  }
+
+  getProjectProfile(): ProjectProfile | null {
+    return this.projectProfile
+  }
+
+  getLspStatus(): { running: boolean; language: LspLanguage | null; diagnosticCount: number } {
+    return this.lspBridge.getStatus()
+  }
+
+  getDiagnosticsSummary(): string {
+    return this.lspBridge.getDiagnosticsSummary()
+  }
+
+  getIgnorePatterns(): string[] {
+    return this.contextFilter.getPatterns()
+  }
+
   getActiveProject(): string | null {
     const cwd = this.getCwd()
     return cwd.split('/').pop() ?? null
@@ -448,6 +648,8 @@ export class AgentOrchestrator extends EventEmitter {
       // Verify it's a git project
       statSync(join(targetPath, '.git'))
       process.chdir(targetPath)
+      // Refresh intelligence for the new project
+      this.refreshIntelligence()
       return { success: true }
     } catch {
       return { success: false }
@@ -488,6 +690,30 @@ export class AgentOrchestrator extends EventEmitter {
     const sanitized = text.trim().slice(0, MAX_INTENT_LENGTH)
     if (!sanitized) throw new Error('Chat text is empty after sanitization')
 
+    // Determine if current model uses a non-Anthropic provider
+    const modelId = this.currentModel
+    const isNonAnthropic = modelId ? (getModelById(modelId)?.provider !== 'anthropic') : false
+
+    if (isNonAnthropic && modelId) {
+      // Non-Anthropic provider — use lightweight streaming chat
+      if (this.sessionManager.hasNonAnthropicSession()) {
+        try {
+          await this.sessionManager.sendNonAnthropicMessage(sanitized)
+          return
+        } catch {
+          console.log('[VIBE:Orchestrator] Non-Anthropic chat session lost, reinitializing...')
+        }
+      }
+      await this.sessionManager.initNonAnthropicChat({
+        prompt: sanitized,
+        cwd: this.getCwd(),
+        model: modelId,
+        intelligence: this.getIntelligenceContext(),
+      })
+      return
+    }
+
+    // Anthropic provider — use existing SDK path
     if (this.sessionManager.hasChatSession()) {
       // Persistent session alive — push message instantly (sub-second)
       try {
@@ -500,7 +726,6 @@ export class AgentOrchestrator extends EventEmitter {
     }
 
     // Initialize new session (or resume previous)
-    // Permission tier is controlled by SessionManager, not by renderer
     const savedSessionId = this.sessionManager.getChatSessionId()
     await this.sessionManager.initChatSession({
       prompt: sanitized,
@@ -508,15 +733,18 @@ export class AgentOrchestrator extends EventEmitter {
       allowedTools: options?.allowedTools,
       model: this.currentModel,
       resume: savedSessionId || undefined,
+      intelligence: this.getIntelligenceContext(),
     })
   }
 
   cancelChat(): void {
     this.sessionManager.cancelChat()
+    this.sessionManager.cancelNonAnthropicChat()
   }
 
   clearChatSession(): void {
     this.sessionManager.clearChat()
+    this.sessionManager.clearNonAnthropicChat()
   }
 
   setModel(model: string): void {
@@ -619,6 +847,7 @@ export class AgentOrchestrator extends EventEmitter {
       cwd: this.getCwd(),
       maxTurns: this.maxTurns,
       allowedTools,
+      intelligence: this.getIntelligenceContext(),
     }).then((output) => {
       this.runningCount--
       task.status = 'completed'
@@ -639,6 +868,7 @@ export class AgentOrchestrator extends EventEmitter {
   destroy(): void {
     this.sessionManager.destroy()
     this.commandGuard.destroy()
+    this.lspBridge.destroy()
     this.stopDevServer()
     for (const [, proc] of this.processes) {
       proc.kill('SIGTERM')

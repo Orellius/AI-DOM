@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import type { Permissions } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
+import { ThinkingIndicator } from './ThinkingIndicator'
 
 const PERMISSION_CHIPS: Array<{
   key: keyof Permissions
@@ -27,13 +28,13 @@ export function CommandBar(): JSX.Element {
   const permissions = useAgentStore((s) => s.permissions)
   const setPermission = useAgentStore((s) => s.setPermission)
 
-  const isThinking = mode === 'build' ? architectStatus === 'thinking' : chatStreaming
+  const isThinking = mode === 'terminal' ? architectStatus === 'thinking' : chatStreaming
 
   const handleSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
     const text = input.trim()
     if (!text) return
-    if (mode === 'build') {
+    if (mode === 'terminal') {
       submitIntent(text)
     } else {
       submitChat(text)
@@ -83,7 +84,7 @@ export function CommandBar(): JSX.Element {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={mode === 'chat' ? 'Ask Claude anything...' : 'Describe what you want to build...'}
+            placeholder={mode === 'chat' ? 'Ask Claude anything...' : 'What do you need?'}
             style={{
               flex: 1,
               background: 'transparent',
@@ -95,16 +96,20 @@ export function CommandBar(): JSX.Element {
             className="placeholder-[#363a44]"
           />
           {isThinking && (
-            <div
-              className="animate-breathe"
-              style={{
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                background: 'var(--color-accent)',
-                boxShadow: '0 0 8px var(--color-accent)',
-              }}
-            />
+            <>
+              <ThinkingIndicator variant="bar" />
+              <div
+                className="animate-breathe"
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: 'var(--color-accent)',
+                  boxShadow: '0 0 8px var(--color-accent)',
+                  flexShrink: 0,
+                }}
+              />
+            </>
           )}
         </div>
       </form>
@@ -113,10 +118,10 @@ export function CommandBar(): JSX.Element {
       <div className="mt-2 flex items-center gap-1.5 pl-6">
         {/* Mode chips */}
         <button
-          onClick={() => mode !== 'build' && toggleMode()}
-          className={mode === 'build' ? 'chip chip-active' : 'chip'}
+          onClick={() => mode !== 'terminal' && toggleMode()}
+          className={mode === 'terminal' ? 'chip chip-active' : 'chip'}
         >
-          Build
+          Terminal
         </button>
         <button
           onClick={() => mode !== 'chat' && toggleMode()}

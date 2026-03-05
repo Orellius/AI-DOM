@@ -42,6 +42,23 @@ const api = {
   approveDangerousCommand: (id: string) => ipcRenderer.invoke('agent:approve-dangerous-command', id),
   rejectDangerousCommand: (id: string) => ipcRenderer.invoke('agent:reject-dangerous-command', id),
   listSnapshots: () => ipcRenderer.invoke('agent:list-snapshots'),
+  resetOnboarding: () => ipcRenderer.invoke('agent:reset-onboarding'),
+  getProjectProfile: () => ipcRenderer.invoke('agent:get-project-profile'),
+  getLspStatus: () => ipcRenderer.invoke('agent:get-lsp-status'),
+  getDiagnostics: () => ipcRenderer.invoke('agent:get-diagnostics'),
+  getIgnorePatterns: () => ipcRenderer.invoke('agent:get-ignore-patterns'),
+  // Provider management
+  getProvidersList: () => ipcRenderer.invoke('agent:get-providers'),
+  getConnectedModels: () => ipcRenderer.invoke('agent:get-connected-models'),
+  testProviderConnection: (providerId: string, apiKey?: string) =>
+    ipcRenderer.invoke('agent:test-provider-connection', providerId, apiKey),
+  setProviderApiKey: (providerId: string, apiKey: string) =>
+    ipcRenderer.invoke('agent:set-provider-api-key', providerId, apiKey),
+  detectOllamaModels: () => ipcRenderer.invoke('agent:detect-ollama-models'),
+  // Model optimizer
+  getOptimizerConfig: () => ipcRenderer.invoke('agent:get-optimizer-config'),
+  updateOptimizerConfig: (categories: unknown[]) =>
+    ipcRenderer.invoke('agent:update-optimizer-config', categories),
 }
 
 if (process.contextIsolated) {

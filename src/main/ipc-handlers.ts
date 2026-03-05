@@ -152,4 +152,21 @@ export function registerIpcHandlers(
   ipcMain.handle('agent:get-active-project', () => {
     return orchestrator.getActiveProject()
   })
+
+  // --- Chat mode ---
+
+  ipcMain.handle('agent:submit-chat', (_event, text: unknown, options: unknown) => {
+    if (typeof text !== 'string' || !text.trim()) {
+      throw new Error('Invalid chat text: must be a non-empty string')
+    }
+    orchestrator.submitChat(text, options as { allowedTools?: string[]; maxTurns?: number } | undefined)
+  })
+
+  ipcMain.handle('agent:cancel-chat', () => {
+    orchestrator.cancelChat()
+  })
+
+  ipcMain.handle('agent:clear-chat', () => {
+    orchestrator.clearChatSession()
+  })
 }

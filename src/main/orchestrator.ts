@@ -26,6 +26,11 @@ export type AgentEvent =
   | { type: 'architect:thinking'; content: string }
   | { type: 'architect:done'; tasks: AgentTask[] }
   | { type: 'auth:status'; installed: boolean; authenticated: boolean }
+  | { type: 'chat:session'; sessionId: string }
+  | { type: 'chat:text'; content: string }
+  | { type: 'chat:tool-use'; name: string; input: string }
+  | { type: 'chat:done' }
+  | { type: 'chat:error'; error: string }
 
 const DEFAULT_CONCURRENCY = 3
 const MAX_INTENT_LENGTH = 10_000
@@ -58,6 +63,8 @@ export class AgentOrchestrator extends EventEmitter {
   private currentModel: string | undefined
   private currentPermissions: IntentPermissions = { files: true, terminal: true, search: true, skipPermissions: false }
   private devServerProcess: ChildProcess | null = null
+  private chatProcess: ChildProcess | null = null
+  private chatSessionId: string | null = null
 
   getCwd(): string {
     return process.cwd()
@@ -101,6 +108,11 @@ export class AgentOrchestrator extends EventEmitter {
       if (msg.includes('auth') || msg.includes('login') || msg.includes('unauthorized') || msg.includes('exited with code')) {
         this.emitEvent({ type: 'auth:status', installed: true, authenticated: false })
       }
+      // Emit a failure event so the UI doesn't stay stuck on "thinking"
+      this.emitEvent({
+        type: 'architect:done',
+        tasks: []
+      })
       throw err
     }
     for (const task of subtasks) {
@@ -373,6 +385,80 @@ export class AgentOrchestrator extends EventEmitter {
     return projects
   }
 
+  // --- Chat mode ---
+
+  submitChat(text: string, options?: { allowedTools?: string[]; maxTurns?: number }): void {
+    if (!text || typeof text !== 'string') throw new Error('Chat text must be a non-empty string')
+    const sanitized = text.trim().slice(0, MAX_INTENT_LENGTH)
+    if (!sanitized) throw new Error('Chat text is empty after sanitization')
+
+    // Kill any running chat process
+    if (this.chatProcess) {
+      this.chatProcess.kill('SIGTERM')
+      this.chatProcess = null
+    }
+
+    const isResume = !!this.chatSessionId
+    if (!this.chatSessionId) {
+      this.chatSessionId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    }
+
+    const cli = new ClaudeCli()
+
+    cli.on('system', (event: { subtype: string; session_id?: string }) => {
+      if (event.subtype === 'init' && event.session_id) {
+        this.chatSessionId = event.session_id
+        this.emitEvent({ type: 'chat:session', sessionId: event.session_id })
+      }
+    })
+
+    cli.on('assistant', (event: { message: { content: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }> } }) => {
+      for (const block of event.message.content) {
+        if (block.type === 'text' && block.text) {
+          this.emitEvent({ type: 'chat:text', content: block.text })
+        }
+        if (block.type === 'tool_use' && block.name) {
+          this.emitEvent({
+            type: 'chat:tool-use',
+            name: block.name,
+            input: JSON.stringify(block.input ?? {}, null, 2)
+          })
+        }
+      }
+    })
+
+    cli.on('close', () => {
+      this.chatProcess = null
+      this.emitEvent({ type: 'chat:done' })
+    })
+
+    cli.on('error', (err: Error) => {
+      this.chatProcess = null
+      this.emitEvent({ type: 'chat:error', error: err.message })
+    })
+
+    this.chatProcess = cli.runChat({
+      text: sanitized,
+      sessionId: this.chatSessionId,
+      isResume,
+      allowedTools: options?.allowedTools,
+      maxTurns: options?.maxTurns ?? this.maxTurns
+    })
+  }
+
+  cancelChat(): void {
+    if (this.chatProcess) {
+      this.chatProcess.kill('SIGTERM')
+      this.chatProcess = null
+      this.emitEvent({ type: 'chat:done' })
+    }
+  }
+
+  clearChatSession(): void {
+    this.cancelChat()
+    this.chatSessionId = null
+  }
+
   private async runArchitect(intent: string): Promise<AgentTask[]> {
     console.log('[VIBE:Architect] spawning architect for:', intent)
     const cli = new ClaudeCli()
@@ -428,7 +514,7 @@ export class AgentOrchestrator extends EventEmitter {
       cli.run({
         prompt: intent,
         systemPrompt: ARCHITECT_SYSTEM_PROMPT,
-        outputFormat: 'json',
+        outputFormat: 'stream-json',
         maxTurns: 1
       })
       console.log('[VIBE:Architect] cli.run() returned (process spawned)')

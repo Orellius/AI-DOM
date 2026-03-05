@@ -22,6 +22,11 @@ type AgentEvent =
   | { type: 'architect:thinking'; text: string }
   | { type: 'architect:done'; taskCount: number }
   | { type: 'auth:status'; installed: boolean; authenticated: boolean }
+  | { type: 'chat:session'; sessionId: string }
+  | { type: 'chat:text'; content: string }
+  | { type: 'chat:tool-use'; name: string; input: string }
+  | { type: 'chat:done' }
+  | { type: 'chat:error'; error: string }
 
 interface IntentOptions {
   permissions: { files: boolean; terminal: boolean; search: boolean; skipPermissions: boolean }
@@ -64,6 +69,9 @@ interface ApiInterface {
   githubLogin: () => Promise<{ started: boolean }>
   switchProject: (name: string) => Promise<{ success: boolean }>
   getActiveProject: () => Promise<string | null>
+  submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) => Promise<void>
+  cancelChat: () => Promise<void>
+  clearChat: () => Promise<void>
 }
 
 declare global {

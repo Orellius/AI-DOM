@@ -25,6 +25,11 @@ export type AgentEvent =
   | { type: 'architect:thinking'; content: string }
   | { type: 'architect:done'; tasks: AgentTask[] }
   | { type: 'auth:status'; installed: boolean; authenticated: boolean }
+  | { type: 'chat:session'; sessionId: string }
+  | { type: 'chat:text'; content: string }
+  | { type: 'chat:tool-use'; name: string; input: string }
+  | { type: 'chat:done' }
+  | { type: 'chat:error'; error: string }
 
 // --- Activity Stream ---
 
@@ -102,6 +107,19 @@ export interface ClaudeConnectivity {
   lastCheck: number
 }
 
+// --- App Mode ---
+
+export type AppMode = 'build' | 'chat'
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  toolCalls: Array<{ name: string; input: string }>
+  timestamp: number
+  isStreaming?: boolean
+}
+
 // --- Store ---
 
 let activityCounter = 0
@@ -114,6 +132,12 @@ interface AgentState {
   permissions: Permissions
   settings: Settings
   claudeMd: string
+
+  // App mode
+  mode: AppMode
+  chatMessages: ChatMessage[]
+  chatSessionId: string | null
+  chatStreaming: boolean
 
   // Display & connectivity
   uiScale: number
@@ -136,6 +160,11 @@ interface AgentState {
   setClaudeMd: (content: string) => void
   getNodes: () => Node[]
   getEdges: () => Edge[]
+
+  // Mode actions
+  toggleMode: () => void
+  submitChat: (text: string) => void
+  clearChat: () => void
 
   // Display & connectivity actions
   setUIScale: (scale: number) => void
@@ -160,6 +189,12 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   permissions: { files: true, terminal: true, search: true, skipPermissions: false },
   settings: { concurrency: 3, maxTurns: 10, model: 'default', cwd: '' },
   claudeMd: '',
+
+  // App mode defaults
+  mode: 'build',
+  chatMessages: [],
+  chatSessionId: null,
+  chatStreaming: false,
 
   // Display & connectivity defaults
   uiScale: (() => {
@@ -333,6 +368,73 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
           }))
         }
         break
+
+      // --- Chat events ---
+
+      case 'chat:session':
+        set({ chatSessionId: event.sessionId })
+        break
+
+      case 'chat:text':
+        set((state) => {
+          const msgs = [...state.chatMessages]
+          const last = msgs[msgs.length - 1]
+          // Append to current streaming assistant message or create new one
+          if (last && last.role === 'assistant' && last.isStreaming) {
+            msgs[msgs.length - 1] = { ...last, content: last.content + event.content }
+          } else {
+            msgs.push({
+              id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role: 'assistant',
+              content: event.content,
+              toolCalls: [],
+              timestamp: Date.now(),
+              isStreaming: true
+            })
+          }
+          return { chatMessages: msgs, chatStreaming: true }
+        })
+        break
+
+      case 'chat:tool-use':
+        set((state) => {
+          const msgs = [...state.chatMessages]
+          const last = msgs[msgs.length - 1]
+          if (last && last.role === 'assistant' && last.isStreaming) {
+            msgs[msgs.length - 1] = {
+              ...last,
+              toolCalls: [...last.toolCalls, { name: event.name, input: event.input }]
+            }
+          }
+          return { chatMessages: msgs }
+        })
+        break
+
+      case 'chat:done':
+        set((state) => {
+          const msgs = state.chatMessages.map((m) =>
+            m.isStreaming ? { ...m, isStreaming: false } : m
+          )
+          return { chatMessages: msgs, chatStreaming: false }
+        })
+        break
+
+      case 'chat:error':
+        set((state) => {
+          const msgs = state.chatMessages.map((m) =>
+            m.isStreaming ? { ...m, isStreaming: false } : m
+          )
+          // Add error as assistant message
+          msgs.push({
+            id: `msg-err-${Date.now()}`,
+            role: 'assistant',
+            content: `Error: ${event.error}`,
+            toolCalls: [],
+            timestamp: Date.now()
+          })
+          return { chatMessages: msgs, chatStreaming: false }
+        })
+        break
     }
   },
 
@@ -371,7 +473,12 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     console.log('[VIBE:Store] calling window.api.submitIntent...')
     window.api.submitIntent(text, { permissions, settings })
       .then(() => console.log('[VIBE:Store] submitIntent IPC resolved OK'))
-      .catch((err: unknown) => console.error('[VIBE:Store] submitIntent IPC REJECTED:', err))
+      .catch((err: unknown) => {
+        console.error('[VIBE:Store] submitIntent IPC REJECTED:', err)
+        const errMsg = err instanceof Error ? err.message : String(err)
+        set({ architectStatus: 'idle' })
+        get().addActivity({ type: 'error', content: `Architect failed: ${errMsg}` })
+      })
   },
 
   setPermission: (key, value) => {
@@ -385,6 +492,61 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
   setClaudeMd: (content) => {
     set({ claudeMd: content })
+  },
+
+  // --- Mode actions ---
+
+  toggleMode: () => {
+    set((state) => ({ mode: state.mode === 'build' ? 'chat' : 'build' }))
+  },
+
+  submitChat: (text) => {
+    const { permissions, settings } = get()
+    // Add user message
+    set((state) => ({
+      chatMessages: [
+        ...state.chatMessages,
+        {
+          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: 'user' as const,
+          content: text,
+          toolCalls: [],
+          timestamp: Date.now()
+        }
+      ],
+      chatStreaming: true
+    }))
+
+    // Build allowed tools from permissions
+    const allowedTools: string[] = []
+    if (permissions.files) allowedTools.push('Read', 'Write', 'Edit')
+    if (permissions.terminal) allowedTools.push('Bash')
+    if (permissions.search) allowedTools.push('Glob', 'Grep')
+
+    window.api.submitChat(text, {
+      allowedTools: permissions.skipPermissions ? undefined : (allowedTools.length > 0 ? allowedTools : undefined),
+      maxTurns: settings.maxTurns
+    }).catch((err: unknown) => {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      set((state) => ({
+        chatStreaming: false,
+        chatMessages: [
+          ...state.chatMessages,
+          {
+            id: `msg-err-${Date.now()}`,
+            role: 'assistant' as const,
+            content: `Error: ${errMsg}`,
+            toolCalls: [],
+            timestamp: Date.now()
+          }
+        ]
+      }))
+    })
+  },
+
+  clearChat: () => {
+    window.api.clearChat().catch(() => { /* ignore */ })
+    set({ chatMessages: [], chatSessionId: null, chatStreaming: false })
   },
 
   // --- Display & connectivity actions ---

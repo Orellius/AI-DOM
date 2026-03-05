@@ -64,6 +64,16 @@ export interface ClaudeResultEvent {
 
 export type ClaudeStreamEvent = ClaudeInitEvent | ClaudeAssistantEvent | ClaudeResultEvent
 
+export interface ChatOptions {
+  text: string
+  sessionId: string
+  isResume: boolean
+  allowedTools?: string[]
+  maxTurns?: number
+  cwd?: string
+  timeoutMs?: number
+}
+
 export class ClaudeCli extends EventEmitter {
   private process: ChildProcess | null = null
   private timeoutHandle: ReturnType<typeof setTimeout> | null = null
@@ -217,7 +227,6 @@ export class ClaudeCli extends EventEmitter {
     ClaudeCli.validateOptions(options)
     console.log('[VIBE:CLI] run() called, prompt:', options.prompt.slice(0, 100), 'format:', options.outputFormat)
 
-    // Build args array — spawn() passes these as separate argv entries (no shell injection)
     const args = ['-p', options.prompt, '--output-format', options.outputFormat]
 
     if (options.systemPrompt) {
@@ -232,10 +241,50 @@ export class ClaudeCli extends EventEmitter {
       }
     }
 
-    // spawn() without shell: true — args are passed directly to execvp, no shell interpretation
+    return this._spawnAndWire(args, options.cwd, options.timeoutMs)
+  }
+
+  runChat(options: ChatOptions): ChildProcess {
+    if (!options.text || typeof options.text !== 'string') {
+      throw new Error('Chat text must be a non-empty string')
+    }
+    if (options.text.length > MAX_PROMPT_LENGTH) {
+      throw new Error(`Chat text exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`)
+    }
+    if (!options.sessionId || typeof options.sessionId !== 'string') {
+      throw new Error('sessionId is required')
+    }
+
+    console.log('[VIBE:CLI] runChat() called, resume:', options.isResume, 'session:', options.sessionId)
+
+    const args = ['-p', options.text, '--output-format', 'stream-json']
+
+    if (options.isResume) {
+      args.push('--resume', options.sessionId)
+    } else {
+      args.push('--session-id', options.sessionId)
+    }
+
+    if (options.maxTurns !== undefined) {
+      if (Number.isInteger(options.maxTurns) && options.maxTurns >= 1 && options.maxTurns <= MAX_TURNS_LIMIT) {
+        args.push('--max-turns', String(options.maxTurns))
+      }
+    }
+    if (options.allowedTools) {
+      for (const tool of options.allowedTools) {
+        if (ALLOWED_TOOL_NAMES.has(tool)) {
+          args.push('--allowedTools', tool)
+        }
+      }
+    }
+
+    return this._spawnAndWire(args, options.cwd, options.timeoutMs)
+  }
+
+  private _spawnAndWire(args: string[], cwd?: string, timeoutMs?: number): ChildProcess {
     console.log('[VIBE:CLI] spawning: claude', args.map((a, i) => i === 1 ? a.slice(0, 50) + '...' : a).join(' '))
     const proc = spawn('claude', args, {
-      cwd: options.cwd ? resolve(options.cwd) : undefined,
+      cwd: cwd ? resolve(cwd) : undefined,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: getSafeEnv()
     })
@@ -244,9 +293,8 @@ export class ClaudeCli extends EventEmitter {
     this.process = proc
     let buffer = ''
     let totalOutputSize = 0
-    const timeout = options.timeoutMs ?? PROCESS_TIMEOUT_MS
+    const timeout = timeoutMs ?? PROCESS_TIMEOUT_MS
 
-    // Kill process if it runs too long
     this.timeoutHandle = setTimeout(() => {
       this.kill()
       this.emit('error', new Error('Process timed out'))
@@ -282,20 +330,21 @@ export class ClaudeCli extends EventEmitter {
 
     proc.stderr?.on('data', (chunk: Buffer) => {
       const stderrStr = chunk.toString()
-      console.error('[VIBE:CLI] stderr:', stderrStr.slice(0, 300))
+      console.warn('[VIBE:CLI] stderr:', stderrStr.slice(0, 300))
       totalOutputSize += chunk.length
       if (totalOutputSize > MAX_OUTPUT_BUFFER) {
         this.kill()
         this.emit('error', new Error('Stderr exceeded maximum buffer size'))
         return
       }
-      this.emit('error', new Error(stderrStr))
+      if (stderrStr.includes('Error') || stderrStr.includes('error:') || stderrStr.includes('ENOENT')) {
+        this.emit('error', new Error(stderrStr))
+      }
     })
 
     proc.on('close', (code) => {
       console.log('[VIBE:CLI] process closed, code:', code)
       this.clearTimeout()
-      // flush remaining buffer
       if (buffer.trim()) {
         console.log('[VIBE:CLI] flushing remaining buffer:', buffer.trim().slice(0, 200))
         try {

@@ -32,7 +32,11 @@ const api = {
   checkGitHub: () => ipcRenderer.invoke('agent:check-github'),
   githubLogin: () => ipcRenderer.invoke('agent:github-login'),
   switchProject: (name: string) => ipcRenderer.invoke('agent:switch-project', name),
-  getActiveProject: () => ipcRenderer.invoke('agent:get-active-project')
+  getActiveProject: () => ipcRenderer.invoke('agent:get-active-project'),
+  submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) =>
+    ipcRenderer.invoke('agent:submit-chat', text, options),
+  cancelChat: () => ipcRenderer.invoke('agent:cancel-chat'),
+  clearChat: () => ipcRenderer.invoke('agent:clear-chat')
 }
 
 if (process.contextIsolated) {

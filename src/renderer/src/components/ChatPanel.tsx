@@ -1,0 +1,176 @@
+import { useEffect, useRef } from 'react'
+import { Eraser, Terminal, Wrench } from 'lucide-react'
+import { useAgentStore } from '../stores/agentStore'
+import type { ChatMessage } from '../stores/agentStore'
+import { scaled } from '../utils/scale'
+
+function ToolCallCard({ name, input }: { name: string; input: string }): JSX.Element {
+  return (
+    <div
+      className="mt-2 rounded-lg overflow-hidden"
+      style={{
+        background: 'var(--color-surface-light)',
+        border: '1px solid var(--color-border)',
+      }}
+    >
+      <div
+        className="flex items-center gap-1.5 px-2.5 py-1.5"
+        style={{
+          background: 'var(--color-surface)',
+          borderBottom: '1px solid var(--color-border)',
+        }}
+      >
+        <Wrench size={11} style={{ color: 'var(--color-accent-dim)' }} />
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: scaled(12),
+            color: 'var(--color-accent)',
+            fontWeight: 500,
+          }}
+        >
+          {name}
+        </span>
+      </div>
+      <pre
+        className="px-2.5 py-2 overflow-x-auto"
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: scaled(11),
+          color: 'var(--color-text-muted)',
+          margin: 0,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          maxHeight: '120px',
+          overflowY: 'auto',
+        }}
+      >
+        {input}
+      </pre>
+    </div>
+  )
+}
+
+function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
+  const isUser = msg.role === 'user'
+
+  return (
+    <div className="animate-slide-up" style={{ marginBottom: '12px' }}>
+      {/* Role label */}
+      <div className="flex items-center gap-1.5 mb-1">
+        {!isUser && <Terminal size={11} style={{ color: 'var(--color-accent-dim)' }} />}
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: scaled(11),
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            color: isUser ? 'var(--color-cyan)' : 'var(--color-accent-dim)',
+          }}
+        >
+          {isUser ? 'You' : 'Claude'}
+        </span>
+        {msg.isStreaming && (
+          <div
+            className="animate-breathe"
+            style={{
+              width: '5px',
+              height: '5px',
+              borderRadius: '50%',
+              background: 'var(--color-accent)',
+              boxShadow: '0 0 6px var(--color-accent)',
+            }}
+          />
+        )}
+      </div>
+
+      {/* Content */}
+      <div
+        className="rounded-lg px-3 py-2.5"
+        style={{
+          background: isUser ? 'rgba(0, 212, 255, 0.04)' : 'var(--color-surface)',
+          borderLeft: isUser ? '2px solid var(--color-cyan)' : '2px solid var(--color-accent-dim)',
+        }}
+      >
+        <div
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: scaled(13),
+            color: 'var(--color-text)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            lineHeight: '1.6',
+          }}
+        >
+          {msg.content}
+          {msg.isStreaming && !msg.content && (
+            <span style={{ color: 'var(--color-text-dim)' }}>Thinking...</span>
+          )}
+        </div>
+
+        {/* Tool calls */}
+        {msg.toolCalls.map((tc, i) => (
+          <ToolCallCard key={`${msg.id}-tool-${i}`} name={tc.name} input={tc.input} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function ChatPanel(): JSX.Element {
+  const chatMessages = useAgentStore((s) => s.chatMessages)
+  const chatStreaming = useAgentStore((s) => s.chatStreaming)
+  const clearChat = useAgentStore((s) => s.clearChat)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [chatMessages, chatStreaming])
+
+  return (
+    <div className="panel h-full flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3 shrink-0">
+        <span className="label">Chat</span>
+        {chatMessages.length > 0 && (
+          <button
+            onClick={clearChat}
+            className="btn"
+            style={{ fontSize: scaled(11), padding: '2px 8px', gap: '4px' }}
+          >
+            <Eraser size={11} />
+            Clear
+          </button>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 pr-1">
+        {chatMessages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3">
+            <Terminal size={24} style={{ color: 'var(--color-text-dim)' }} />
+            <p
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: scaled(13),
+                color: 'var(--color-text-dim)',
+                textAlign: 'center',
+                lineHeight: '1.6',
+              }}
+            >
+              Direct conversation with Claude.
+              <br />
+              Full tool access. Multi-turn.
+            </p>
+          </div>
+        ) : (
+          chatMessages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
+        )}
+      </div>
+    </div>
+  )
+}

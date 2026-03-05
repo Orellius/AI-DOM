@@ -19,16 +19,25 @@ export function CommandBar(): JSX.Element {
   const [input, setInput] = useState('')
   const [showSkipWarning, setShowSkipWarning] = useState(false)
   const submitIntent = useAgentStore((s) => s.submitIntent)
+  const submitChat = useAgentStore((s) => s.submitChat)
   const architectStatus = useAgentStore((s) => s.architectStatus)
+  const chatStreaming = useAgentStore((s) => s.chatStreaming)
+  const mode = useAgentStore((s) => s.mode)
+  const toggleMode = useAgentStore((s) => s.toggleMode)
   const permissions = useAgentStore((s) => s.permissions)
   const setPermission = useAgentStore((s) => s.setPermission)
+
+  const isThinking = mode === 'build' ? architectStatus === 'thinking' : chatStreaming
 
   const handleSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
     const text = input.trim()
     if (!text) return
-    console.log('[VIBE:CommandBar] submit:', text)
-    submitIntent(text)
+    if (mode === 'build') {
+      submitIntent(text)
+    } else {
+      submitChat(text)
+    }
     setInput('')
   }
 
@@ -57,11 +66,11 @@ export function CommandBar(): JSX.Element {
             fontFamily: 'var(--font-mono)',
             fontSize: scaled(16),
             fontWeight: 600,
-            color: architectStatus === 'thinking' ? 'var(--color-accent)' : 'var(--color-text-dim)',
+            color: isThinking ? 'var(--color-accent)' : 'var(--color-text-dim)',
             transition: 'color 0.3s ease',
           }}
         >
-          &gt;
+          {mode === 'chat' ? '~' : '>'}
         </span>
         <div
           className="flex flex-1 items-center gap-2 rounded-lg px-3 py-2"
@@ -74,7 +83,7 @@ export function CommandBar(): JSX.Element {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Describe what you want to build..."
+            placeholder={mode === 'chat' ? 'Ask Claude anything...' : 'Describe what you want to build...'}
             style={{
               flex: 1,
               background: 'transparent',
@@ -85,7 +94,7 @@ export function CommandBar(): JSX.Element {
             }}
             className="placeholder-[#363a44]"
           />
-          {architectStatus === 'thinking' && (
+          {isThinking && (
             <div
               className="animate-breathe"
               style={{
@@ -100,8 +109,38 @@ export function CommandBar(): JSX.Element {
         </div>
       </form>
 
-      {/* Permission chips */}
+      {/* Mode chips + Permission chips */}
       <div className="mt-2 flex items-center gap-1.5 pl-6">
+        {/* Mode chips */}
+        <button
+          onClick={() => mode !== 'build' && toggleMode()}
+          className={mode === 'build' ? 'chip chip-active' : 'chip'}
+        >
+          Build
+        </button>
+        <button
+          onClick={() => mode !== 'chat' && toggleMode()}
+          className={mode === 'chat' ? 'chip chip-active' : 'chip'}
+        >
+          Chat
+        </button>
+
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: scaled(10),
+            color: 'var(--color-text-dim)',
+            marginLeft: '2px',
+            marginRight: '4px',
+          }}
+        >
+          ⇧Tab
+        </span>
+
+        {/* Divider */}
+        <div style={{ width: '1px', height: '14px', background: 'var(--color-border)', marginRight: '2px' }} />
+
+        {/* Permission chips */}
         {PERMISSION_CHIPS.map((chip) => {
           const active = permissions[chip.key]
           const isDanger = chip.danger && active

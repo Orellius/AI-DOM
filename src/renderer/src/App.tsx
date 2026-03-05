@@ -185,6 +185,10 @@ function App(): JSX.Element {
     if (tabId === 'stream') {
       setOverlayTab(null)
       setActiveTab('stream')
+    } else if (activeTab === tabId) {
+      // Clicking active tab again → close overlay, return to stream
+      setOverlayTab(null)
+      setActiveTab('stream')
     } else {
       setActiveTab(tabId)
       setOverlayTab(tabId as OverlayTab)
@@ -407,50 +411,13 @@ function App(): JSX.Element {
         </div>
 
         {/* ── Full Content Area ── */}
-        <div className="flex-1 min-h-0 flex flex-col p-3 gap-2.5">
+        <div className="flex-1 min-h-0 flex flex-col p-3 gap-2.5 relative">
           {activeProject ? (
             <>
               {/* Main content — Stream always alive, overlays slide in */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
                 {renderStreamContent()}
                 <FileViewer />
-
-                {/* Overlay panel (slides in from left over Stream) */}
-                {overlayTab && (
-                  <div
-                    key={overlayTab}
-                    className="absolute inset-0 z-10 flex flex-col animate-slide-in-left"
-                    style={{ background: 'var(--color-base)' }}
-                  >
-                    {/* Back arrow header */}
-                    <div
-                      className="flex items-center gap-2 shrink-0"
-                      style={{
-                        padding: '8px 12px',
-                        borderBottom: '1px solid var(--color-border)',
-                      }}
-                    >
-                      <button
-                        onClick={() => { setOverlayTab(null); setActiveTab('stream') }}
-                        className="btn"
-                        style={{ padding: '4px 10px', fontSize: scaled(12) }}
-                      >
-                        <ArrowLeft size={14} />
-                        Back
-                      </button>
-                      <span
-                        className="label"
-                        style={{ fontSize: scaled(11) }}
-                      >
-                        {OVERLAY_LABELS[overlayTab]}
-                      </span>
-                    </div>
-                    {/* Panel content */}
-                    <div className="flex-1 overflow-hidden p-3">
-                      {renderOverlayContent(overlayTab)}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Bottom: Actions + Command */}
@@ -487,6 +454,43 @@ function App(): JSX.Element {
                 >
                   Add a project folder from the Explorer panel, or select an existing one.
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Overlay panel — renders on top of everything, works with or without active project */}
+          {overlayTab && (
+            <div
+              key={overlayTab}
+              className="absolute inset-0 z-10 flex flex-col animate-slide-in-left"
+              style={{ background: 'var(--color-base)', borderRadius: '12px' }}
+            >
+              {/* Back arrow header */}
+              <div
+                className="flex items-center gap-2 shrink-0"
+                style={{
+                  padding: '8px 12px',
+                  borderBottom: '1px solid var(--color-border)',
+                }}
+              >
+                <button
+                  onClick={() => { setOverlayTab(null); setActiveTab('stream') }}
+                  className="btn"
+                  style={{ padding: '4px 10px', fontSize: scaled(12) }}
+                >
+                  <ArrowLeft size={14} />
+                  Back
+                </button>
+                <span
+                  className="label"
+                  style={{ fontSize: scaled(11) }}
+                >
+                  {OVERLAY_LABELS[overlayTab]}
+                </span>
+              </div>
+              {/* Panel content */}
+              <div className="flex-1 overflow-hidden p-3">
+                {renderOverlayContent(overlayTab)}
               </div>
             </div>
           )}

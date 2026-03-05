@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   FolderGit2, FolderPlus, X, AlertTriangle,
-  FileCode2, Braces, GitBranch, Play, Hammer, TestTube2, File,
+  FileCode2, Braces, Cog, GitBranch, Play, Hammer, TestTube2, File,
   ChevronDown, Brain,
 } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'

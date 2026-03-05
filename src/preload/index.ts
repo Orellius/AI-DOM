@@ -39,6 +39,7 @@ const api = {
   getActiveProject: () => ipcRenderer.invoke('agent:get-active-project'),
   addProject: () => ipcRenderer.invoke('agent:add-project'),
   removeProject: (path: string) => ipcRenderer.invoke('agent:remove-project', path),
+  showInFinder: (path: string) => ipcRenderer.invoke('agent:show-in-finder', path),
   submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) =>
     ipcRenderer.invoke('agent:submit-chat', text, options),
   cancelChat: () => ipcRenderer.invoke('agent:cancel-chat'),

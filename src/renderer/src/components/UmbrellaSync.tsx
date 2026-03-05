@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   FolderGit2, FolderPlus, X, AlertTriangle,
   FileCode2, Braces, Cog, GitBranch, Play, Hammer, TestTube2, File,
-  ChevronDown, Brain,
+  ChevronDown, Brain, FolderOpen, Trash2, RefreshCw,
 } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
@@ -193,10 +193,58 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
   const [switching, setSwitching] = useState<string | null>(null)
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
   const [scaffoldingPath, setScaffoldingPath] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; project: ProjectInfo } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const activeProject = useAgentStore((s) => s.activeProject)
   const projectDiagnosis = useAgentStore((s) => s.projectDiagnosis)
   const switchProject = useAgentStore((s) => s.switchProject)
   const addActivity = useAgentStore((s) => s.addActivity)
+
+  // Close context menu on outside click or escape
+  useEffect(() => {
+    if (!contextMenu) return
+    const handleClick = (e: MouseEvent): void => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null)
+      }
+    }
+    const handleKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setContextMenu(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [contextMenu])
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, project: ProjectInfo): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY, project })
+  }, [])
+
+  const handleOpenInFinder = useCallback((): void => {
+    if (!contextMenu) return
+    window.api.showInFinder(contextMenu.project.path).catch(() => {})
+    setContextMenu(null)
+  }, [contextMenu])
+
+  const handleContextRemove = useCallback(async (): Promise<void> => {
+    if (!contextMenu) return
+    const path = contextMenu.project.path
+    setContextMenu(null)
+    try {
+      const result = await window.api.removeProject(path)
+      if (result.success) {
+        setProjects((prev) => prev.filter((p) => p.path !== path))
+        if (activeProject?.path === path) {
+          useAgentStore.getState().setActiveProject(null)
+        }
+      }
+    } catch { /* ignore */ }
+  }, [contextMenu, activeProject?.path])
 
   // Fetch project list on mount
   useEffect(() => {
@@ -243,8 +291,10 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
   const handleScaffold = async (path: string): Promise<void> => {
     try {
       const result = await window.api.scaffoldProject(path)
+      // Also scaffold .vibe/ workspace identity files
+      await window.api.scaffoldWorkspaceFiles().catch(() => {})
       if (result.success) {
-        addActivity({ type: 'system', content: `Scaffolded: ${result.output}` })
+        addActivity({ type: 'system', content: `Initialized: ${result.output} + .vibe/ workspace files` })
         // Refresh project list to pick up isInitialized change
         const updated = await window.api.getProjects()
         setProjects(updated)
@@ -266,27 +316,61 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
-        <p className="label" style={{ fontSize: scaled(10) }}>Explorer</p>
-        <button
-          onClick={handleAddFolder}
-          className="flex items-center justify-center rounded transition-colors"
-          style={{
-            width: '20px',
-            height: '20px',
-            color: 'var(--color-text-dim)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'var(--color-surface-light)'
-            e.currentTarget.style.color = 'var(--color-accent)'
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent'
-            e.currentTarget.style.color = 'var(--color-text-dim)'
-          }}
-          title="Add project folder"
-        >
-          <FolderPlus size={13} />
-        </button>
+        <p style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: scaled(12),
+          fontWeight: 700,
+          color: 'var(--color-text)',
+          letterSpacing: '0.02em',
+        }}>
+          Explorer
+        </p>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              useAgentStore.getState().refreshFileTree()
+              // Also refresh project list
+              window.api.getProjects().then(setProjects).catch(() => {})
+            }}
+            className="flex items-center justify-center rounded transition-colors"
+            style={{
+              width: '20px',
+              height: '20px',
+              color: 'var(--color-text-dim)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--color-surface-light)'
+              e.currentTarget.style.color = 'var(--color-accent)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-dim)'
+            }}
+            title="Refresh file tree"
+          >
+            <RefreshCw size={12} />
+          </button>
+          <button
+            onClick={handleAddFolder}
+            className="flex items-center justify-center rounded transition-colors"
+            style={{
+              width: '20px',
+              height: '20px',
+              color: 'var(--color-text-dim)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--color-surface-light)'
+              e.currentTarget.style.color = 'var(--color-accent)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-dim)'
+            }}
+            title="Add project folder"
+          >
+            <FolderPlus size={13} />
+          </button>
+        </div>
       </div>
 
       {/* Workspace Profile button */}
@@ -362,6 +446,7 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
                 <div key={p.path}>
                   <button
                     onClick={() => handleSwitch(p)}
+                    onContextMenu={(e) => handleContextMenu(e, p)}
                     disabled={isActive || !!switching}
                     className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all w-full relative"
                     style={{
@@ -417,7 +502,7 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
                           marginTop: '1px',
                         }}
                       >
-                        {p.isInitialized ? p.branch : 'not initialized'}
+                        {p.isInitialized ? p.branch : 'Profile not found'}
                       </p>
                     </div>
                     {isActive && !isHovered && (
@@ -469,7 +554,7 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
                           marginBottom: '6px',
                         }}
                       >
-                        No .git or package.json found
+                        Initialize .vibe/ workspace identity
                       </p>
                       <div className="flex items-center gap-2">
                         <button
@@ -539,6 +624,71 @@ export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {})
             <FilesSection />
           </div>
         </>
+      )}
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          style={{
+            position: 'fixed',
+            top: contextMenu.y,
+            left: contextMenu.x,
+            zIndex: 999,
+            background: 'var(--color-surface-raised, #1e1e2e)',
+            border: '1px solid var(--color-border)',
+            borderRadius: '8px',
+            padding: '4px',
+            minWidth: '180px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+          }}
+        >
+          <button
+            onClick={handleOpenInFinder}
+            className="flex items-center gap-2 w-full text-left rounded-md transition-colors"
+            style={{
+              padding: '6px 10px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: scaled(11),
+              color: 'var(--color-text)',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+            }}
+          >
+            <FolderOpen size={13} style={{ color: 'var(--color-text-dim)' }} />
+            {navigator.platform.includes('Mac') ? 'Open in Finder' : 'Open in Explorer'}
+          </button>
+          <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.06)', margin: '2px 4px' }} />
+          <button
+            onClick={handleContextRemove}
+            className="flex items-center gap-2 w-full text-left rounded-md transition-colors"
+            style={{
+              padding: '6px 10px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: scaled(11),
+              color: 'var(--color-error, #ff5555)',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 85, 85, 0.08)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+            }}
+          >
+            <Trash2 size={13} />
+            Remove from Workspace
+          </button>
+        </div>
       )}
 
     </div>

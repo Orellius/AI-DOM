@@ -353,6 +353,7 @@ interface AgentState {
   resetPlanDetection: () => void
 
   // File explorer actions
+  refreshFileTree: () => Promise<void>
   loadDirectory: (relativePath: string) => Promise<void>
   toggleDirectory: (relativePath: string) => void
   openFile: (relativePath: string) => Promise<void>
@@ -1329,6 +1330,14 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   },
 
   // --- File explorer actions ---
+
+  refreshFileTree: async () => {
+    set({ fileTree: {}, expandedDirs: [] })
+    try {
+      const entries = await window.api.listDirectory('.')
+      set({ fileTree: { '.': entries } })
+    } catch { /* ignore */ }
+  },
 
   loadDirectory: async (relativePath: string) => {
     try {

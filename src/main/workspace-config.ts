@@ -239,6 +239,12 @@ export class WorkspaceConfigManager {
     }
   }
 
+  /** Clear all projects and active state — used when onboarding resets. */
+  clear(): void {
+    this.config = { projects: [], activeProjectPath: null }
+    this.save()
+  }
+
   getActiveProjectPath(): string | null {
     const active = this.config.activeProjectPath
     if (!active) return null

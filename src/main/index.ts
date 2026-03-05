@@ -60,7 +60,11 @@ app.whenReady().then(() => {
 
   // Dev utility: set VIBE_RESET_ONBOARDING=1 to force re-show onboarding
   if (process.env['VIBE_RESET_ONBOARDING'] === '1') {
-    mainWindow.webContents.on('did-finish-load', () => {
+    orchestrator.clearWorkspace()
+    let didReset = false
+    mainWindow.webContents.on('dom-ready', () => {
+      if (didReset) return
+      didReset = true
       mainWindow.webContents.executeJavaScript(
         'localStorage.removeItem("vibeflow:onboarding-complete"); location.reload();'
       ).catch(() => {})

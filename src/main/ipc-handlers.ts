@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { AgentOrchestrator, AgentEvent } from './orchestrator'
@@ -245,6 +245,12 @@ export function registerIpcHandlers(
     if (typeof absolutePath !== 'string' || !absolutePath.trim()) throw new Error('Invalid project path')
     if (!absolutePath.startsWith('/')) throw new Error('Path must be absolute')
     return orchestrator.removeProject(absolutePath)
+  })
+
+  ipcMain.handle('agent:show-in-finder', (_event, absolutePath: unknown) => {
+    if (typeof absolutePath !== 'string' || !absolutePath.trim()) throw new Error('Invalid path')
+    if (!absolutePath.startsWith('/')) throw new Error('Path must be absolute')
+    shell.showItemInFolder(absolutePath)
   })
 
   // --- Chat mode ---

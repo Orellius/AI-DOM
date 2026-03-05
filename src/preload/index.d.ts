@@ -197,6 +197,7 @@ interface ApiInterface {
   getActiveProject: () => Promise<string | null>
   addProject: () => Promise<{ success: boolean; projects: Array<{ name: string; path: string; branch: string; isInitialized: boolean }> }>
   removeProject: (path: string) => Promise<{ success: boolean }>
+  showInFinder: (path: string) => Promise<void>
   submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) => Promise<void>
   cancelChat: () => Promise<void>
   clearChat: () => Promise<void>

@@ -467,11 +467,13 @@ export class AgentOrchestrator extends EventEmitter {
     this.emitEvent({ type: 'architect:thinking', content: 'Decomposing task...' })
 
     // Use non-streaming json format — no --verbose, no tool access, no CLAUDE.md context
+    // Sonnet is fast and more than sufficient for task decomposition
     const resultText = await ClaudeCli.runJson({
       prompt: intent,
       systemPrompt: ARCHITECT_SYSTEM_PROMPT,
       maxTurns: 1,
-      timeoutMs: 60_000
+      model: 'sonnet',
+      timeoutMs: 3 * 60 * 1000
     })
 
     console.log('[VIBE:Architect] resultText:', resultText.slice(0, 500))

@@ -188,6 +188,7 @@ export class ClaudeCli extends EventEmitter {
     systemPrompt?: string
     maxTurns?: number
     timeoutMs?: number
+    model?: string
   }): Promise<string> {
     if (!options.prompt || typeof options.prompt !== 'string') {
       throw new Error('Prompt must be a non-empty string')
@@ -202,6 +203,9 @@ export class ClaudeCli extends EventEmitter {
     }
     if (options.maxTurns !== undefined) {
       args.push('--max-turns', String(options.maxTurns))
+    }
+    if (options.model) {
+      args.push('--model', options.model)
     }
 
     const raw = await ClaudeCli.execSpawn(args, options.timeoutMs ?? PROCESS_TIMEOUT_MS)

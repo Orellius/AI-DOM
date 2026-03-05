@@ -17,9 +17,8 @@ export function UmbrellaSync(): JSX.Element {
   useEffect(() => {
     window.api.getProjects().then((p) => {
       setProjects(p)
-      // Detect current active project from cwd
-      window.api.getActiveProject().then((name) => setActiveProject(name))
-    })
+      window.api.getActiveProject().then((name) => setActiveProject(name)).catch(() => {})
+    }).catch(() => {})
   }, [])
 
   const handleSwitch = async (projectName: string) => {

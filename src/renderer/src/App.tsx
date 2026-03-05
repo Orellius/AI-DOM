@@ -18,9 +18,7 @@ import { NeuralMap } from './components/NeuralMap'
 import { ActivityStream } from './components/ActivityStream'
 import { CommandBar } from './components/CommandBar'
 import { QuickActions } from './components/QuickActions'
-import { AgentSwarm } from './components/AgentSwarm'
-import { ConversationThread } from './components/ConversationThread'
-import { Sidebar } from './components/Sidebar'
+import { RightSidebar } from './components/RightSidebar'
 import { Onboarding } from './components/Onboarding'
 import { FileChangeFeed } from './components/FileChangeFeed'
 import { DevServerPanel } from './components/DevServerPanel'
@@ -74,6 +72,8 @@ function App(): JSX.Element {
         installed: result.installed,
         authenticated: result.authenticated
       })
+    }).catch((err) => {
+      console.error('[VIBE:App] checkAuth failed:', err)
     })
   }, [])
 
@@ -102,22 +102,13 @@ function App(): JSX.Element {
       case 'stream':
         return (
           <div className="flex gap-2.5 h-full min-h-0">
-            {/* Left: Threads + Swarm */}
-            <div className="flex flex-col gap-2.5 min-h-0 overflow-hidden" style={{ width: '220px', flexShrink: 0 }}>
-              <div className="panel overflow-y-auto shrink-0 max-h-[38%]">
-                <ConversationThread />
-              </div>
-              <div className="panel overflow-y-auto flex-1 min-h-0">
-                <AgentSwarm />
-              </div>
-            </div>
-            {/* Center: Activity (Build) or Chat — same column, mode switches content */}
+            {/* Center: Terminal or Chat — expanded, takes most space */}
             <div className="flex-1 min-h-0 overflow-hidden">
               {mode === 'chat' ? <ChatPanel /> : <ActivityStream />}
             </div>
-            {/* Right: Projects */}
-            <div className="panel overflow-hidden" style={{ width: '250px', flexShrink: 0 }}>
-              <Sidebar />
+            {/* Right: Projects + Architect + Intents */}
+            <div className="panel overflow-hidden" style={{ width: '260px', flexShrink: 0 }}>
+              <RightSidebar />
             </div>
           </div>
         )
@@ -193,7 +184,7 @@ function App(): JSX.Element {
           <div className="flex-1 flex flex-col gap-0.5 py-2 px-1.5 overflow-hidden">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon
-              const isActive = activeTab === item.id && mode === 'build'
+              const isActive = activeTab === item.id && mode === 'terminal'
               return (
                 <button
                   key={item.id}

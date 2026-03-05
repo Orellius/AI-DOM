@@ -113,7 +113,7 @@ export function SettingsPanel(): JSX.Element {
     const check = (): void => {
       window.api.checkConnectivity().then((result) => {
         setClaudeConnectivity({ connected: result.connected, version: result.version })
-      })
+      }).catch(() => {})
     }
     check()
     const interval = setInterval(check, 30_000)
@@ -124,7 +124,7 @@ export function SettingsPanel(): JSX.Element {
   useEffect(() => {
     window.api.checkGitHub().then((result) => {
       setGitHub({ authenticated: result.authenticated, username: result.username, remote: result.remote })
-    })
+    }).catch(() => {})
   }, [setGitHub])
 
   const handleSelectDir = async (): Promise<void> => {
@@ -138,7 +138,7 @@ export function SettingsPanel(): JSX.Element {
     setTimeout(() => {
       window.api.checkGitHub().then((result) => {
         setGitHub({ authenticated: result.authenticated, username: result.username, remote: result.remote })
-      })
+      }).catch(() => {})
     }, 15_000)
   }
 
@@ -185,7 +185,7 @@ export function SettingsPanel(): JSX.Element {
             onClick={() => {
               window.api.checkConnectivity().then((result) => {
                 setClaudeConnectivity({ connected: result.connected, version: result.version })
-              })
+              }).catch(() => {})
             }}
             className="btn"
             style={{ fontSize: scaled(12) }}

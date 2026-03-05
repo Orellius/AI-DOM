@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Node, Edge } from '@xyflow/react'
+import { detectBuildIntent } from '../utils/intentDetection'
 
 // --- Shared types (must match orchestrator AgentEvent) ---
 
@@ -29,7 +30,20 @@ export type AgentEvent =
   | { type: 'chat:text'; content: string }
   | { type: 'chat:tool-use'; name: string; input: string }
   | { type: 'chat:done' }
+  | { type: 'chat:cost'; costUsd: number; turns: number }
   | { type: 'chat:error'; error: string }
+  | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
+  | { type: 'dangerous-command:approved'; id: string; command: string }
+  | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
+
+// --- Dangerous Command ---
+
+export interface PendingDangerousCommand {
+  id: string
+  command: string
+  reason: string
+  timestamp: number
+}
 
 // --- Activity Stream ---
 
@@ -109,7 +123,7 @@ export interface ClaudeConnectivity {
 
 // --- App Mode ---
 
-export type AppMode = 'build' | 'chat'
+export type AppMode = 'terminal' | 'chat'
 
 export interface ChatMessage {
   id: string
@@ -118,6 +132,16 @@ export interface ChatMessage {
   toolCalls: Array<{ name: string; input: string }>
   timestamp: number
   isStreaming?: boolean
+  costUsd?: number
+  turns?: number
+}
+
+// --- Mode Switch Prompt ---
+
+export interface ModeSwitchPrompt {
+  visible: boolean
+  direction: 'to-terminal' | 'to-chat'
+  lastDismissed: number
 }
 
 // --- Store ---
@@ -138,6 +162,10 @@ interface AgentState {
   chatMessages: ChatMessage[]
   chatSessionId: string | null
   chatStreaming: boolean
+  modeSwitchPrompt: ModeSwitchPrompt
+
+  // Plan viewport
+  planExpanded: boolean
 
   // Display & connectivity
   uiScale: number
@@ -152,6 +180,10 @@ interface AgentState {
   devServer: DevServerState
   snapshots: Snapshot[]
 
+  // Security state
+  permissionTier: 'normal' | 'bypass'
+  pendingDangerousCommands: PendingDangerousCommand[]
+
   // Existing actions
   handleEvent: (event: AgentEvent) => void
   submitIntent: (text: string) => void
@@ -165,11 +197,17 @@ interface AgentState {
   toggleMode: () => void
   submitChat: (text: string) => void
   clearChat: () => void
+  showModeSwitchPrompt: (direction: ModeSwitchPrompt['direction']) => void
+  dismissModeSwitchPrompt: () => void
+  acceptModeSwitchPrompt: () => void
 
   // Display & connectivity actions
   setUIScale: (scale: number) => void
   setGitHub: (status: Partial<GitHubStatus>) => void
   setClaudeConnectivity: (status: Partial<ClaudeConnectivity>) => void
+
+  // Plan viewport actions
+  togglePlanViewport: () => void
 
   // New actions
   addActivity: (entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => void
@@ -179,6 +217,11 @@ interface AgentState {
   setDevServer: (state: Partial<DevServerState>) => void
   addDevServerOutput: (line: string) => void
   refreshFileChanges: () => void
+
+  // Security actions
+  setPermissionTier: (tier: 'normal' | 'bypass') => void
+  approveDangerousCommand: (id: string) => void
+  rejectDangerousCommand: (id: string) => void
 }
 
 export const useAgentStore = create<AgentState>()((set, get) => ({
@@ -191,10 +234,14 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   claudeMd: '',
 
   // App mode defaults
-  mode: 'build',
+  mode: 'terminal',
   chatMessages: [],
   chatSessionId: null,
   chatStreaming: false,
+  modeSwitchPrompt: { visible: false, direction: 'to-terminal', lastDismissed: 0 },
+
+  // Plan viewport
+  planExpanded: false,
 
   // Display & connectivity defaults
   uiScale: (() => {
@@ -213,6 +260,10 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   fileChanges: [],
   devServer: { running: false, url: null, output: [], command: null },
   snapshots: [],
+
+  // Security defaults
+  permissionTier: 'bypass',
+  pendingDangerousCommands: [],
 
   handleEvent: (event) => {
     console.log('[VIBE:Store] handleEvent:', event.type, event)
@@ -410,14 +461,37 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         })
         break
 
-      case 'chat:done':
+      case 'chat:cost':
+        // Store cost info on the last assistant message for future UI display
+        set((state) => {
+          const msgs = [...state.chatMessages]
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'assistant') {
+              msgs[i] = { ...msgs[i], costUsd: event.costUsd, turns: event.turns }
+              break
+            }
+          }
+          return { chatMessages: msgs }
+        })
+        break
+
+      case 'chat:done': {
         set((state) => {
           const msgs = state.chatMessages.map((m) =>
             m.isStreaming ? { ...m, isStreaming: false } : m
           )
           return { chatMessages: msgs, chatStreaming: false }
         })
+        // Check last assistant message for build intent → suggest mode switch
+        const { chatMessages, mode: currentMode, showModeSwitchPrompt } = get()
+        if (currentMode === 'chat') {
+          const lastAssistant = [...chatMessages].reverse().find((m) => m.role === 'assistant')
+          if (lastAssistant && detectBuildIntent(lastAssistant.content)) {
+            showModeSwitchPrompt('to-terminal')
+          }
+        }
         break
+      }
 
       case 'chat:error':
         set((state) => {
@@ -434,6 +508,32 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
           })
           return { chatMessages: msgs, chatStreaming: false }
         })
+        break
+
+      // --- Dangerous command events ---
+
+      case 'dangerous-command:pending':
+        set((state) => ({
+          pendingDangerousCommands: [
+            ...state.pendingDangerousCommands,
+            { id: event.id, command: event.command, reason: event.reason, timestamp: event.timestamp }
+          ]
+        }))
+        addActivity({ type: 'error', content: `Dangerous command blocked: ${event.reason}` })
+        break
+
+      case 'dangerous-command:approved':
+        set((state) => ({
+          pendingDangerousCommands: state.pendingDangerousCommands.filter((c) => c.id !== event.id)
+        }))
+        addActivity({ type: 'system', content: `Command approved: ${event.command}` })
+        break
+
+      case 'dangerous-command:rejected':
+        set((state) => ({
+          pendingDangerousCommands: state.pendingDangerousCommands.filter((c) => c.id !== event.id)
+        }))
+        addActivity({ type: 'system', content: `Command rejected: ${event.command}` })
         break
     }
   },
@@ -497,7 +597,38 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   // --- Mode actions ---
 
   toggleMode: () => {
-    set((state) => ({ mode: state.mode === 'build' ? 'chat' : 'build' }))
+    set((state) => ({ mode: state.mode === 'terminal' ? 'chat' : 'terminal' }))
+  },
+
+  showModeSwitchPrompt: (direction) => {
+    const { mode, modeSwitchPrompt } = get()
+    // Don't show if already in the target mode or within 30s cooldown
+    if (
+      (direction === 'to-terminal' && mode === 'terminal') ||
+      (direction === 'to-chat' && mode === 'chat') ||
+      Date.now() - modeSwitchPrompt.lastDismissed < 30_000
+    ) return
+    set({ modeSwitchPrompt: { ...modeSwitchPrompt, visible: true, direction } })
+  },
+
+  dismissModeSwitchPrompt: () => {
+    set((state) => ({
+      modeSwitchPrompt: { ...state.modeSwitchPrompt, visible: false, lastDismissed: Date.now() }
+    }))
+  },
+
+  acceptModeSwitchPrompt: () => {
+    const { modeSwitchPrompt } = get()
+    const newMode = modeSwitchPrompt.direction === 'to-terminal' ? 'terminal' : 'chat'
+    set({
+      mode: newMode,
+      modeSwitchPrompt: { ...modeSwitchPrompt, visible: false }
+    })
+  },
+
+  // Plan viewport
+  togglePlanViewport: () => {
+    set((state) => ({ planExpanded: !state.planExpanded }))
   },
 
   submitChat: (text) => {
@@ -526,7 +657,6 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     window.api.submitChat(text, {
       allowedTools: permissions.skipPermissions ? undefined : (allowedTools.length > 0 ? allowedTools : undefined),
       maxTurns: settings.maxTurns,
-      dangerouslySkipPermissions: permissions.skipPermissions
     }).catch((err: unknown) => {
       const errMsg = err instanceof Error ? err.message : String(err)
       set((state) => ({
@@ -606,6 +736,8 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         conversationHistory: state.conversationHistory.slice(0, -1)
       }))
       addActivity({ type: 'system', content: 'Undo complete — workspace restored' })
+    }).catch((err: unknown) => {
+      addActivity({ type: 'error', content: `Undo failed: ${err instanceof Error ? err.message : String(err)}` })
     })
   },
 
@@ -621,6 +753,8 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         type: result.success ? 'system' : 'error',
         content: result.output || `${action} ${result.success ? 'succeeded' : 'failed'}`
       })
+    }).catch((err: unknown) => {
+      addActivity({ type: 'error', content: `${action} failed: ${err instanceof Error ? err.message : String(err)}` })
     })
   },
 
@@ -642,6 +776,27 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       if (changes && changes.length > 0) {
         set({ fileChanges: changes })
       }
+    }).catch(() => { /* ignore */ })
+  },
+
+  // --- Security actions ---
+
+  setPermissionTier: (tier) => {
+    set({ permissionTier: tier })
+    window.api.setPermissionTier(tier).catch((err: unknown) => {
+      console.error('[VIBE:Store] setPermissionTier error:', err)
+    })
+  },
+
+  approveDangerousCommand: (id) => {
+    window.api.approveDangerousCommand(id).catch((err: unknown) => {
+      console.error('[VIBE:Store] approveDangerousCommand error:', err)
+    })
+  },
+
+  rejectDangerousCommand: (id) => {
+    window.api.rejectDangerousCommand(id).catch((err: unknown) => {
+      console.error('[VIBE:Store] rejectDangerousCommand error:', err)
     })
   },
 

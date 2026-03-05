@@ -16,7 +16,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#0c0c0c',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: true
     }
   })
 
@@ -25,7 +25,15 @@ function createWindow(): BrowserWindow {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // Only allow http/https URLs to prevent file:// and custom protocol attacks
+    try {
+      const url = new URL(details.url)
+      if (url.protocol === 'https:' || url.protocol === 'http:') {
+        shell.openExternal(details.url)
+      }
+    } catch {
+      // Invalid URL — silently block
+    }
     return { action: 'deny' }
   })
 
@@ -48,6 +56,11 @@ app.whenReady().then(() => {
   const mainWindow = createWindow()
   const orchestrator = new AgentOrchestrator()
   registerIpcHandlers(orchestrator, mainWindow)
+
+  // Clean shutdown: destroy SDK sessions before quit
+  app.on('before-quit', () => {
+    orchestrator.destroy()
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

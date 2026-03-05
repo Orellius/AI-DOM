@@ -36,7 +36,12 @@ const api = {
   submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) =>
     ipcRenderer.invoke('agent:submit-chat', text, options),
   cancelChat: () => ipcRenderer.invoke('agent:cancel-chat'),
-  clearChat: () => ipcRenderer.invoke('agent:clear-chat')
+  clearChat: () => ipcRenderer.invoke('agent:clear-chat'),
+  setModel: (model: string) => ipcRenderer.invoke('agent:set-model', model),
+  setPermissionTier: (tier: 'normal' | 'bypass') => ipcRenderer.invoke('agent:set-permission-tier', tier),
+  approveDangerousCommand: (id: string) => ipcRenderer.invoke('agent:approve-dangerous-command', id),
+  rejectDangerousCommand: (id: string) => ipcRenderer.invoke('agent:reject-dangerous-command', id),
+  listSnapshots: () => ipcRenderer.invoke('agent:list-snapshots'),
 }
 
 if (process.contextIsolated) {

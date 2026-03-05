@@ -2,6 +2,10 @@ import { useEffect, useRef } from 'react'
 import { Wrench, FileText, AlertCircle, Zap } from 'lucide-react'
 import { useAgentStore, ActivityEntry } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
+import { ModeSwitchBanner } from './ModeSwitchBanner'
+import { PlanBubble } from './PlanBubble'
+import { PlanPanel } from './PlanPanel'
+import { AtomicConfirmOverlay } from './AtomicConfirmButton'
 
 function formatTime(timestamp: number): string {
   const diff = Math.floor((Date.now() - timestamp) / 1000)
@@ -43,7 +47,14 @@ export function ActivityStream(): JSX.Element {
   }, [activityLog.length])
 
   return (
-    <div className="activity-stream flex flex-col h-full overflow-hidden">
+    <div className="activity-stream flex flex-col h-full overflow-hidden" style={{ position: 'relative' }}>
+      {/* Plan viewport */}
+      <PlanBubble />
+      <PlanPanel />
+      {/* Mode switch banner */}
+      <ModeSwitchBanner />
+      {/* Dangerous command overlay */}
+      <AtomicConfirmOverlay />
       {/* Header */}
       <div
         className="flex items-center gap-2 px-4 py-2.5 shrink-0"

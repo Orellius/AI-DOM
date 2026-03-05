@@ -4,6 +4,24 @@ import { join } from 'path'
 import { AgentOrchestrator, AgentEvent } from './orchestrator'
 import { ClaudeCli } from './claude-cli'
 
+// --- Input validation helpers ---
+
+function validateString(val: unknown, name: string, maxLen = 10_000): string {
+  if (typeof val !== 'string') throw new Error(`${name} must be a string`)
+  const trimmed = val.trim()
+  if (!trimmed) throw new Error(`${name} cannot be empty`)
+  if (trimmed.length > maxLen) throw new Error(`${name} exceeds max length (${maxLen})`)
+  return trimmed
+}
+
+function validateEnum<T extends string>(val: unknown, name: string, allowed: Set<T>): T {
+  if (typeof val !== 'string') throw new Error(`${name} must be a string`)
+  if (!allowed.has(val as T)) throw new Error(`${name} must be one of: ${[...allowed].join(', ')}`)
+  return val as T
+}
+
+const VALID_QUICK_ACTIONS = new Set(['commit', 'test', 'push', 'run'] as const)
+
 export function registerIpcHandlers(
   orchestrator: AgentOrchestrator,
   mainWindow: BrowserWindow
@@ -74,6 +92,11 @@ export function registerIpcHandlers(
     orchestrator.updateSettings(settings as Record<string, unknown>)
   })
 
+  ipcMain.handle('agent:set-model', (_event, model: unknown) => {
+    if (typeof model !== 'string') throw new Error('Model must be a string')
+    orchestrator.setModel(model)
+  })
+
   ipcMain.handle('agent:select-directory', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory']
@@ -98,7 +121,6 @@ export function registerIpcHandlers(
     const { spawn: spawnProc } = require('child_process')
     const proc = spawnProc('gh', ['auth', 'login', '--web'], {
       stdio: 'pipe',
-      env: { ...process.env }
     })
     // Fire and forget — user completes in browser
     proc.on('error', () => { /* ignore */ })
@@ -138,8 +160,8 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('agent:quick-action', (_event, action: unknown) => {
-    if (typeof action !== 'string') throw new Error('Invalid action')
-    return orchestrator.runQuickAction(action)
+    const validated = validateEnum(action, 'action', VALID_QUICK_ACTIONS)
+    return orchestrator.runQuickAction(validated)
   })
 
   ipcMain.handle('agent:switch-project', (_event, name: unknown) => {
@@ -156,10 +178,12 @@ export function registerIpcHandlers(
   // --- Chat mode ---
 
   ipcMain.handle('agent:submit-chat', (_event, text: unknown, options: unknown) => {
-    if (typeof text !== 'string' || !text.trim()) {
-      throw new Error('Invalid chat text: must be a non-empty string')
-    }
-    orchestrator.submitChat(text, options as { allowedTools?: string[]; maxTurns?: number; dangerouslySkipPermissions?: boolean } | undefined)
+    const validated = validateString(text, 'chat text', 50_000)
+    // Strip dangerouslySkipPermissions — renderer should not control this
+    const safeOpts = options && typeof options === 'object'
+      ? { ...(options as Record<string, unknown>), dangerouslySkipPermissions: undefined }
+      : undefined
+    orchestrator.submitChat(validated, safeOpts as { allowedTools?: string[]; maxTurns?: number } | undefined)
   })
 
   ipcMain.handle('agent:cancel-chat', () => {
@@ -168,5 +192,30 @@ export function registerIpcHandlers(
 
   ipcMain.handle('agent:clear-chat', () => {
     orchestrator.clearChatSession()
+  })
+
+  // --- Permission tier ---
+
+  const VALID_PERMISSION_TIERS = new Set(['normal', 'bypass'] as const)
+
+  ipcMain.handle('agent:set-permission-tier', (_event, tier: unknown) => {
+    const validated = validateEnum(tier, 'permission tier', VALID_PERMISSION_TIERS)
+    orchestrator.setPermissionTier(validated)
+  })
+
+  // --- Command guard ---
+
+  ipcMain.handle('agent:approve-dangerous-command', (_event, id: unknown) => {
+    const validated = validateString(id, 'command id', 200)
+    orchestrator.approveDangerousCommand(validated)
+  })
+
+  ipcMain.handle('agent:reject-dangerous-command', (_event, id: unknown) => {
+    const validated = validateString(id, 'command id', 200)
+    orchestrator.rejectDangerousCommand(validated)
+  })
+
+  ipcMain.handle('agent:list-snapshots', () => {
+    return orchestrator.getSnapshotHistory()
   })
 }

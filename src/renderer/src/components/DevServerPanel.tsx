@@ -55,12 +55,21 @@ export function DevServerPanel(): JSX.Element {
 
   const handleStart = async () => {
     const cmd = command.trim() || 'pnpm dev'
-    setDevServer({ running: true, command: cmd })
-    await window.api.startDevServer(cmd)
+    try {
+      setDevServer({ running: true, command: cmd })
+      await window.api.startDevServer(cmd)
+    } catch (err) {
+      setDevServer({ running: false })
+      addDevServerOutput(`[error] ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const handleStop = async () => {
-    await window.api.stopDevServer()
+    try {
+      await window.api.stopDevServer()
+    } catch {
+      // ignore
+    }
     setDevServer({ running: false })
   }
 

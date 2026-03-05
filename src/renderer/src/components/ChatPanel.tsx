@@ -1,10 +1,16 @@
-import { useEffect, useRef } from 'react'
-import { Eraser, Terminal, Wrench } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Eraser, Terminal, Wrench, ChevronRight } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
 import type { ChatMessage } from '../stores/agentStore'
 import { scaled } from '../utils/scale'
+import { ThinkingIndicator } from './ThinkingIndicator'
+import { ModeSwitchBanner } from './ModeSwitchBanner'
+import { MarkdownContent } from './MarkdownContent'
+import { AtomicConfirmOverlay } from './AtomicConfirmButton'
 
 function ToolCallCard({ name, input }: { name: string; input: string }): JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+
   return (
     <div
       className="mt-2 rounded-lg overflow-hidden"
@@ -13,14 +19,26 @@ function ToolCallCard({ name, input }: { name: string; input: string }): JSX.Ele
         border: '1px solid var(--color-border)',
       }}
     >
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1.5"
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 w-full text-left"
         style={{
           background: 'var(--color-surface)',
-          borderBottom: '1px solid var(--color-border)',
+          borderBottom: expanded ? '1px solid var(--color-border)' : 'none',
+          cursor: 'pointer',
+          border: 'none',
         }}
       >
-        <Wrench size={11} style={{ color: 'var(--color-accent-dim)' }} />
+        <ChevronRight
+          size={11}
+          style={{
+            color: 'var(--color-text-dim)',
+            transition: 'transform 0.15s ease',
+            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            flexShrink: 0,
+          }}
+        />
+        <Wrench size={11} style={{ color: 'var(--color-accent-dim)', flexShrink: 0 }} />
         <span
           style={{
             fontFamily: 'var(--font-mono)',
@@ -31,28 +49,40 @@ function ToolCallCard({ name, input }: { name: string; input: string }): JSX.Ele
         >
           {name}
         </span>
-      </div>
-      <pre
-        className="px-2.5 py-2 overflow-x-auto"
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: scaled(11),
-          color: 'var(--color-text-muted)',
-          margin: 0,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          maxHeight: '120px',
-          overflowY: 'auto',
-        }}
-      >
-        {input}
-      </pre>
+      </button>
+      {expanded && (
+        <pre
+          className="px-2.5 py-2 overflow-x-auto"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: scaled(11),
+            color: 'var(--color-text-muted)',
+            margin: 0,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            maxHeight: '120px',
+            overflowY: 'auto',
+          }}
+        >
+          {input}
+        </pre>
+      )}
     </div>
   )
 }
 
+/** Strip "★ Insight" blocks that leak from system prompt formatting */
+function cleanAssistantContent(text: string): string {
+  // Remove backtick-delimited insight headers/footers and content between them
+  return text
+    .replace(/`[★*]\s*Insight\s*[─—\-]+`\s*/g, '')
+    .replace(/`[─—\-]{10,}`\s*/g, '')
+    .trim()
+}
+
 function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
   const isUser = msg.role === 'user'
+  const displayContent = isUser ? msg.content : cleanAssistantContent(msg.content)
 
   return (
     <div className="animate-slide-up" style={{ marginBottom: '12px' }}>
@@ -93,26 +123,34 @@ function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
           borderLeft: isUser ? '2px solid var(--color-cyan)' : '2px solid var(--color-accent-dim)',
         }}
       >
-        <div
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: scaled(13),
-            color: 'var(--color-text)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            lineHeight: '1.6',
-          }}
-        >
-          {msg.content}
-          {msg.isStreaming && !msg.content && (
-            <span style={{ color: 'var(--color-text-dim)' }}>Thinking...</span>
-          )}
-        </div>
+        {/* Tool calls — rendered first (they execute before the response) */}
+        {msg.toolCalls.length > 0 && (
+          <div style={{ marginBottom: displayContent ? '8px' : 0 }}>
+            {msg.toolCalls.map((tc, i) => (
+              <ToolCallCard key={`${msg.id}-tool-${i}`} name={tc.name} input={tc.input} />
+            ))}
+          </div>
+        )}
 
-        {/* Tool calls */}
-        {msg.toolCalls.map((tc, i) => (
-          <ToolCallCard key={`${msg.id}-tool-${i}`} name={tc.name} input={tc.input} />
-        ))}
+        {/* Message text */}
+        {msg.isStreaming && !msg.content ? (
+          <ThinkingIndicator />
+        ) : isUser ? (
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: scaled(13),
+              color: 'var(--color-text)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              lineHeight: '1.6',
+            }}
+          >
+            {msg.content}
+          </div>
+        ) : (
+          <MarkdownContent content={displayContent} />
+        )}
       </div>
     </div>
   )
@@ -133,6 +171,8 @@ export function ChatPanel(): JSX.Element {
 
   return (
     <div className="panel h-full flex flex-col overflow-hidden">
+      {/* Mode switch banner */}
+      <ModeSwitchBanner />
       {/* Header */}
       <div className="flex items-center justify-between mb-3 shrink-0">
         <span className="label">Chat</span>
@@ -147,6 +187,9 @@ export function ChatPanel(): JSX.Element {
           </button>
         )}
       </div>
+
+      {/* Dangerous command overlay */}
+      <AtomicConfirmOverlay />
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 pr-1">

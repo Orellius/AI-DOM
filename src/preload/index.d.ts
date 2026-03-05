@@ -26,7 +26,11 @@ type AgentEvent =
   | { type: 'chat:text'; content: string }
   | { type: 'chat:tool-use'; name: string; input: string }
   | { type: 'chat:done' }
+  | { type: 'chat:cost'; costUsd: number; turns: number }
   | { type: 'chat:error'; error: string }
+  | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
+  | { type: 'dangerous-command:approved'; id: string; command: string }
+  | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
 
 interface IntentOptions {
   permissions: { files: boolean; terminal: boolean; search: boolean; skipPermissions: boolean }
@@ -69,9 +73,14 @@ interface ApiInterface {
   githubLogin: () => Promise<{ started: boolean }>
   switchProject: (name: string) => Promise<{ success: boolean }>
   getActiveProject: () => Promise<string | null>
-  submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number; dangerouslySkipPermissions?: boolean }) => Promise<void>
+  submitChat: (text: string, options?: { allowedTools?: string[]; maxTurns?: number }) => Promise<void>
   cancelChat: () => Promise<void>
   clearChat: () => Promise<void>
+  setModel: (model: string) => Promise<void>
+  setPermissionTier: (tier: 'normal' | 'bypass') => Promise<void>
+  approveDangerousCommand: (id: string) => Promise<void>
+  rejectDangerousCommand: (id: string) => Promise<void>
+  listSnapshots: () => Promise<SnapshotInfo[]>
 }
 
 declare global {

@@ -31,7 +31,7 @@ export function Onboarding(): JSX.Element | null {
         // Auto-check GitHub status
         window.api.checkGitHub().then((result) => {
           setGitHub({ authenticated: result.authenticated, username: result.username, remote: result.remote })
-        })
+        }).catch(() => {})
       }
     }
   }, [isAuthenticated, authInstalled, setGitHub])
@@ -71,7 +71,7 @@ export function Onboarding(): JSX.Element | null {
                 window.api.checkGitHub().then((result) => {
                   setGitHub({ authenticated: result.authenticated, username: result.username, remote: result.remote })
                   if (result.authenticated) clearInterval(interval)
-                })
+                }).catch(() => {})
               }, 3000)
               setTimeout(() => clearInterval(interval), 120_000)
             }}
@@ -139,7 +139,7 @@ function NotInstalledState(): JSX.Element {
         installed: result.installed,
         authenticated: result.authenticated
       })
-    })
+    }).catch(() => {})
   }
 
   return (
@@ -173,16 +173,21 @@ function ClaudeAuthState(): JSX.Element {
 
   const handleLogin = async (): Promise<void> => {
     setLoggingIn(true)
-    const result = await window.api.startLogin()
-    if (result.success) {
-      const auth = await window.api.checkAuth()
-      useAgentStore.getState().handleEvent({
-        type: 'auth:status',
-        installed: auth.installed,
-        authenticated: auth.authenticated
-      })
+    try {
+      const result = await window.api.startLogin()
+      if (result.success) {
+        const auth = await window.api.checkAuth()
+        useAgentStore.getState().handleEvent({
+          type: 'auth:status',
+          installed: auth.installed,
+          authenticated: auth.authenticated
+        })
+      }
+    } catch (err) {
+      console.error('[VIBE:Onboarding] login failed:', err)
+    } finally {
+      setLoggingIn(false)
     }
-    setLoggingIn(false)
   }
 
   return (

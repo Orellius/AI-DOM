@@ -4,6 +4,22 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { join, dirname } from 'path'
 import { randomUUID } from 'crypto'
 import { ClaudeCli } from './claude-cli'
+import { SessionManager } from './session-manager'
+import type { PermissionTier } from './session-manager'
+import { CommandGuard } from './command-guard'
+
+// Safe env allowlist — mirrors session-manager.ts
+const SAFE_ENV_KEYS = [
+  'PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM',
+  'NODE_ENV', 'EDITOR', 'TERM_PROGRAM', 'TMPDIR', 'XDG_CONFIG_HOME',
+]
+function getSafeEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const key of SAFE_ENV_KEYS) {
+    if (process.env[key]) env[key] = process.env[key]!
+  }
+  return env
+}
 
 export interface AgentTask {
   id: string
@@ -31,7 +47,11 @@ export type AgentEvent =
   | { type: 'chat:text'; content: string }
   | { type: 'chat:tool-use'; name: string; input: string }
   | { type: 'chat:done' }
+  | { type: 'chat:cost'; costUsd: number; turns: number }
   | { type: 'chat:error'; error: string }
+  | { type: 'dangerous-command:pending'; id: string; command: string; reason: string; timestamp: number }
+  | { type: 'dangerous-command:approved'; id: string; command: string }
+  | { type: 'dangerous-command:rejected'; id: string; command: string; reason?: string }
 
 const DEFAULT_CONCURRENCY = 3
 const MAX_INTENT_LENGTH = 10_000
@@ -66,9 +86,48 @@ export class AgentOrchestrator extends EventEmitter {
   private devServerProcess: ChildProcess | null = null
   private chatProcess: ChildProcess | null = null
   private chatSessionId: string | null = null
+  private sessionManager: SessionManager
+  private commandGuard: CommandGuard
+  private snapshotHistory: Array<{ id: string; intent: string; timestamp: number; commitHash: string }> = []
+
+  constructor() {
+    super()
+    this.sessionManager = new SessionManager()
+    this.commandGuard = new CommandGuard()
+    // Forward all SessionManager events to orchestrator listeners
+    this.sessionManager.on('event', (event: AgentEvent) => {
+      this.emitEvent(event)
+    })
+    // Forward command guard events
+    this.commandGuard.on('command:pending', (data) => {
+      this.emit('event', { type: 'dangerous-command:pending', ...data })
+    })
+    this.commandGuard.on('command:approved', (data) => {
+      this.emit('event', { type: 'dangerous-command:approved', ...data })
+    })
+    this.commandGuard.on('command:rejected', (data) => {
+      this.emit('event', { type: 'dangerous-command:rejected', ...data })
+    })
+  }
 
   getCwd(): string {
     return process.cwd()
+  }
+
+  setPermissionTier(tier: PermissionTier): void {
+    this.sessionManager.permissionTier = tier
+  }
+
+  approveDangerousCommand(id: string): void {
+    this.commandGuard.approve(id)
+  }
+
+  rejectDangerousCommand(id: string): void {
+    this.commandGuard.reject(id)
+  }
+
+  getSnapshotHistory(): Array<{ id: string; intent: string; timestamp: number; commitHash: string }> {
+    return [...this.snapshotHistory]
   }
 
   updateSettings(settings: Record<string, unknown>): void {
@@ -125,6 +184,9 @@ export class AgentOrchestrator extends EventEmitter {
   }
 
   cancelTask(taskId: string): void {
+    // Cancel via SessionManager (SDK-native)
+    this.sessionManager.cancelWorker(taskId)
+    // Also check legacy process map
     const proc = this.processes.get(taskId)
     if (proc) {
       proc.kill('SIGTERM')
@@ -162,13 +224,21 @@ export class AgentOrchestrator extends EventEmitter {
         execFileSync('git', ['commit', '-m', msg, '--allow-empty'], { cwd, stdio: 'pipe' })
       }
       const hash = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, stdio: 'pipe' }).toString().trim()
-      return {
+      const snapshot = {
         id: `snap-${Date.now()}`,
         intent,
         timestamp: Date.now(),
         commitHash: hash
       }
-    } catch {
+      // Keep snapshot history (cap at 20)
+      this.snapshotHistory.push(snapshot)
+      if (this.snapshotHistory.length > 20) {
+        this.snapshotHistory = this.snapshotHistory.slice(-20)
+      }
+      return snapshot
+    } catch (err) {
+      // Emit warning but don't block — snapshot failure should not halt intent
+      this.emitEvent({ type: 'chat:error', error: `Snapshot failed: ${err instanceof Error ? err.message : String(err)}` })
       return null
     }
   }
@@ -187,6 +257,8 @@ export class AgentOrchestrator extends EventEmitter {
     this.runningCount = 0
     this.tasks.clear()
     execFileSync('git', ['reset', '--hard', commitHash], { cwd, stdio: 'pipe' })
+    // Also clean untracked files to fully restore state
+    execFileSync('git', ['clean', '-fd'], { cwd, stdio: 'pipe' })
   }
 
   // --- File changes (git-based) ---
@@ -221,17 +293,41 @@ export class AgentOrchestrator extends EventEmitter {
 
   // --- Dev server management ---
 
-  startDevServer(command: string): void {
+  // Allowlist for dev server commands — prevents arbitrary command execution
+  private static readonly ALLOWED_DEV_COMMANDS = [
+    /^(?:pnpm|npm)\s+(?:run\s+)?(?:dev|start|serve|preview)$/,
+    /^yarn\s+(?:dev|start|serve|preview)$/,
+    /^npx\s+(?:vite|next\s+dev|nuxt\s+dev|remix\s+dev|astro\s+dev)$/,
+    /^node\s+\S+\.(?:js|mjs|cjs)$/,
+    /^bun\s+(?:run\s+)?(?:dev|start|serve)$/,
+  ]
+
+  async startDevServer(command: string): Promise<void> {
+    const trimmed = command.trim()
+    const isAllowed = AgentOrchestrator.ALLOWED_DEV_COMMANDS.some((re) => re.test(trimmed))
+    if (!isAllowed) {
+      throw new Error(`Command not allowed: "${trimmed}". Only standard dev server commands are permitted.`)
+    }
+
+    // Check for dangerous patterns even in whitelisted commands
+    const guardResult = this.commandGuard.check(trimmed)
+    if (guardResult.dangerous) {
+      const approved = await this.commandGuard.requestApproval(trimmed, guardResult.reason)
+      if (!approved) {
+        throw new Error(`Command blocked: ${guardResult.reason}`)
+      }
+    }
+
     if (this.devServerProcess) {
       this.devServerProcess.kill('SIGTERM')
     }
 
-    const args = command.split(' ')
+    const args = trimmed.split(' ')
     const cmd = args.shift()!
     const proc = spawn(cmd, args, {
       cwd: this.getCwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env }
+      env: getSafeEnv(),
     })
 
     this.devServerProcess = proc
@@ -269,7 +365,6 @@ export class AgentOrchestrator extends EventEmitter {
     try {
       const output = execFileSync('gh', ['auth', 'status'], {
         stdio: 'pipe',
-        env: { ...process.env },
         timeout: 10_000
       }).toString()
       // gh auth status outputs "Logged in to github.com account USERNAME"
@@ -386,79 +481,47 @@ export class AgentOrchestrator extends EventEmitter {
     return projects
   }
 
-  // --- Chat mode ---
+  // --- Chat mode (SDK-native persistent sessions) ---
 
-  submitChat(text: string, options?: { allowedTools?: string[]; maxTurns?: number; dangerouslySkipPermissions?: boolean }): void {
+  async submitChat(text: string, options?: { allowedTools?: string[]; maxTurns?: number }): Promise<void> {
     if (!text || typeof text !== 'string') throw new Error('Chat text must be a non-empty string')
     const sanitized = text.trim().slice(0, MAX_INTENT_LENGTH)
     if (!sanitized) throw new Error('Chat text is empty after sanitization')
 
-    // Kill any running chat process
-    if (this.chatProcess) {
-      this.chatProcess.kill('SIGTERM')
-      this.chatProcess = null
+    if (this.sessionManager.hasChatSession()) {
+      // Persistent session alive — push message instantly (sub-second)
+      try {
+        await this.sessionManager.sendChatMessage(sanitized)
+        return
+      } catch {
+        // Session died — fall through to reinit with resume
+        console.log('[VIBE:Orchestrator] Chat session lost, reinitializing...')
+      }
     }
 
-    const isResume = !!this.chatSessionId
-    if (!this.chatSessionId) {
-      this.chatSessionId = randomUUID()
-    }
-
-    const cli = new ClaudeCli()
-
-    cli.on('system', (event: { subtype: string; session_id?: string }) => {
-      if (event.subtype === 'init' && event.session_id) {
-        this.chatSessionId = event.session_id
-        this.emitEvent({ type: 'chat:session', sessionId: event.session_id })
-      }
-    })
-
-    cli.on('assistant', (event: { message: { content: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }> } }) => {
-      for (const block of event.message.content) {
-        if (block.type === 'text' && block.text) {
-          this.emitEvent({ type: 'chat:text', content: block.text })
-        }
-        if (block.type === 'tool_use' && block.name) {
-          this.emitEvent({
-            type: 'chat:tool-use',
-            name: block.name,
-            input: JSON.stringify(block.input ?? {}, null, 2)
-          })
-        }
-      }
-    })
-
-    cli.on('close', () => {
-      this.chatProcess = null
-      this.emitEvent({ type: 'chat:done' })
-    })
-
-    cli.on('error', (err: Error) => {
-      this.chatProcess = null
-      this.emitEvent({ type: 'chat:error', error: err.message })
-    })
-
-    this.chatProcess = cli.runChat({
-      text: sanitized,
-      sessionId: this.chatSessionId,
-      isResume,
-      allowedTools: options?.dangerouslySkipPermissions ? undefined : options?.allowedTools,
-      maxTurns: options?.maxTurns ?? this.maxTurns,
-      dangerouslySkipPermissions: options?.dangerouslySkipPermissions
+    // Initialize new session (or resume previous)
+    // Permission tier is controlled by SessionManager, not by renderer
+    const savedSessionId = this.sessionManager.getChatSessionId()
+    await this.sessionManager.initChatSession({
+      prompt: sanitized,
+      cwd: this.getCwd(),
+      allowedTools: options?.allowedTools,
+      model: this.currentModel,
+      resume: savedSessionId || undefined,
     })
   }
 
   cancelChat(): void {
-    if (this.chatProcess) {
-      this.chatProcess.kill('SIGTERM')
-      this.chatProcess = null
-      this.emitEvent({ type: 'chat:done' })
-    }
+    this.sessionManager.cancelChat()
   }
 
   clearChatSession(): void {
-    this.cancelChat()
-    this.chatSessionId = null
+    this.sessionManager.clearChat()
+  }
+
+  setModel(model: string): void {
+    this.currentModel = model === 'default' ? undefined : model
+    this.sessionManager.setModel(model)
   }
 
   private async runArchitect(intent: string): Promise<AgentTask[]> {
@@ -466,15 +529,8 @@ export class AgentOrchestrator extends EventEmitter {
 
     this.emitEvent({ type: 'architect:thinking', content: 'Decomposing task...' })
 
-    // Use non-streaming json format — no --verbose, no tool access, no CLAUDE.md context
-    // Sonnet is fast and more than sufficient for task decomposition
-    const resultText = await ClaudeCli.runJson({
-      prompt: intent,
-      systemPrompt: ARCHITECT_SYSTEM_PROMPT,
-      maxTurns: 1,
-      model: 'sonnet',
-      timeoutMs: 3 * 60 * 1000
-    })
+    // SDK-native one-shot query — no tools, Sonnet model, single turn
+    const resultText = await this.sessionManager.runArchitect(intent, ARCHITECT_SYSTEM_PROMPT)
 
     console.log('[VIBE:Architect] resultText:', resultText.slice(0, 500))
 
@@ -507,32 +563,37 @@ export class AgentOrchestrator extends EventEmitter {
   }
 
   private scheduleNext(): void {
-    if (this.runningCount >= this.concurrencyLimit) return
+    try {
+      if (this.runningCount >= this.concurrencyLimit) return
 
-    for (const task of this.tasks.values()) {
-      if (task.status !== 'pending') continue
-      if (this.runningCount >= this.concurrencyLimit) break
+      for (const task of this.tasks.values()) {
+        if (task.status !== 'pending') continue
+        if (this.runningCount >= this.concurrencyLimit) break
 
-      const depsResolved = task.dependencies.every((depId) => {
-        const dep = this.tasks.get(depId)
-        return dep && dep.status === 'completed'
-      })
+        const depsResolved = task.dependencies.every((depId) => {
+          const dep = this.tasks.get(depId)
+          return dep && dep.status === 'completed'
+        })
 
-      const depsFailed = task.dependencies.some((depId) => {
-        const dep = this.tasks.get(depId)
-        return dep && dep.status === 'failed'
-      })
+        const depsFailed = task.dependencies.some((depId) => {
+          const dep = this.tasks.get(depId)
+          return dep && dep.status === 'failed'
+        })
 
-      if (depsFailed) {
-        task.status = 'failed'
-        task.completedAt = Date.now()
-        this.emitEvent({ type: 'task:failed', task, error: 'Dependency failed' })
-        continue
+        if (depsFailed) {
+          task.status = 'failed'
+          task.completedAt = Date.now()
+          this.emitEvent({ type: 'task:failed', task, error: 'Dependency failed' })
+          continue
+        }
+
+        if (depsResolved) {
+          this.runWorker(task)
+        }
       }
-
-      if (depsResolved) {
-        this.runWorker(task)
-      }
+    } catch (err) {
+      console.error('[VIBE:Orchestrator] scheduleNext error:', err)
+      this.emitEvent({ type: 'chat:error', error: `Scheduler error: ${err instanceof Error ? err.message : String(err)}` })
     }
   }
 
@@ -541,49 +602,6 @@ export class AgentOrchestrator extends EventEmitter {
     task.startedAt = Date.now()
     this.runningCount++
     this.emitEvent({ type: 'task:started', task })
-
-    const cli = new ClaudeCli()
-    let output = ''
-
-    cli.on('assistant', (event: { message: { content: Array<{ type: string; text?: string; name?: string }> } }) => {
-      for (const block of event.message.content) {
-        if (block.type === 'text' && block.text) {
-          output += block.text
-          this.emitEvent({ type: 'task:progress', taskId: task.id, content: block.text })
-        }
-        if (block.type === 'tool_use' && block.name) {
-          task.toolInUse = block.name
-          this.emitEvent({ type: 'task:progress', taskId: task.id, content: '', toolInUse: block.name })
-        }
-      }
-    })
-
-    cli.on('close', (code: number | null) => {
-      this.processes.delete(task.id)
-      this.runningCount--
-
-      if (code === 0) {
-        task.status = 'completed'
-        task.output = output
-        task.completedAt = Date.now()
-        this.emitEvent({ type: 'task:completed', task })
-      } else {
-        task.status = 'failed'
-        task.completedAt = Date.now()
-        this.emitEvent({ type: 'task:failed', task, error: `Process exited with code ${code}` })
-      }
-
-      this.scheduleNext()
-    })
-
-    cli.on('error', (err: Error) => {
-      this.processes.delete(task.id)
-      this.runningCount--
-      task.status = 'failed'
-      task.completedAt = Date.now()
-      this.emitEvent({ type: 'task:failed', task, error: err.message })
-      this.scheduleNext()
-    })
 
     const allowedTools: string[] | undefined = this.currentPermissions.skipPermissions
       ? undefined
@@ -595,15 +613,37 @@ export class AgentOrchestrator extends EventEmitter {
           return tools.length > 0 ? tools : undefined
         })()
 
-    const proc = cli.run({
+    // SDK-native worker — streams progress events via SessionManager
+    this.sessionManager.runWorker(task.id, {
       prompt: task.description,
-      outputFormat: 'stream-json',
+      cwd: this.getCwd(),
       maxTurns: this.maxTurns,
       allowedTools,
-      dangerouslySkipPermissions: this.currentPermissions.skipPermissions
+    }).then((output) => {
+      this.runningCount--
+      task.status = 'completed'
+      task.output = output
+      task.completedAt = Date.now()
+      this.emitEvent({ type: 'task:completed', task })
+      this.scheduleNext()
+    }).catch((err) => {
+      this.runningCount--
+      task.status = 'failed'
+      task.completedAt = Date.now()
+      const errMsg = err instanceof Error ? err.message : String(err)
+      this.emitEvent({ type: 'task:failed', task, error: errMsg })
+      this.scheduleNext()
     })
+  }
 
-    this.processes.set(task.id, proc)
+  destroy(): void {
+    this.sessionManager.destroy()
+    this.commandGuard.destroy()
+    this.stopDevServer()
+    for (const [, proc] of this.processes) {
+      proc.kill('SIGTERM')
+    }
+    this.processes.clear()
   }
 
   private emitEvent(event: AgentEvent): void {

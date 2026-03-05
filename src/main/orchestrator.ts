@@ -463,65 +463,32 @@ export class AgentOrchestrator extends EventEmitter {
 
   private async runArchitect(intent: string): Promise<AgentTask[]> {
     console.log('[VIBE:Architect] spawning architect for:', intent)
-    const cli = new ClaudeCli()
 
-    return new Promise((resolve, reject) => {
-      let resultText = ''
+    this.emitEvent({ type: 'architect:thinking', content: 'Decomposing task...' })
 
-      cli.on('assistant', (event: { message: { content: Array<{ type: string; text?: string }> } }) => {
-        console.log('[VIBE:Architect] got assistant event, blocks:', event.message.content.length)
-        for (const block of event.message.content) {
-          if (block.type === 'text' && block.text) {
-            console.log('[VIBE:Architect] text block:', block.text.slice(0, 200))
-            this.emitEvent({ type: 'architect:thinking', content: block.text })
-            resultText += block.text
-          }
-        }
-      })
-
-      cli.on('result', (event: { result: string }) => {
-        console.log('[VIBE:Architect] got result event:', String(event.result).slice(0, 300))
-        resultText = event.result || resultText
-      })
-
-      cli.on('close', (code: number | null) => {
-        console.log('[VIBE:Architect] process closed with code:', code)
-        console.log('[VIBE:Architect] resultText:', resultText.slice(0, 500))
-        try {
-          const parsed = this.parseTaskArray(resultText)
-          const capped = parsed.slice(0, MAX_TASKS_PER_INTENT)
-          const validIds = new Set(capped.map((t) => t.id))
-          const tasks: AgentTask[] = capped.map((t) => ({
-            id: t.id,
-            description: String(t.description || '').slice(0, 2000),
-            type: t.type || 'code',
-            status: 'pending' as const,
-            agent: 'worker' as const,
-            dependencies: (t.dependencies || []).filter((d: string) => validIds.has(d))
-          }))
-          console.log('[VIBE:Architect] parsed tasks:', tasks.length)
-          resolve(tasks)
-        } catch (err) {
-          console.error('[VIBE:Architect] parse FAILED:', err, 'raw:', resultText.slice(0, 500))
-          reject(new Error(`Failed to parse architect output: ${err}`))
-        }
-      })
-
-      cli.on('error', (err: Error) => {
-        console.error('[VIBE:Architect] error event:', err)
-        reject(err)
-      })
-
-      console.log('[VIBE:Architect] calling cli.run() with prompt:', intent.slice(0, 100))
-      cli.run({
-        prompt: intent,
-        systemPrompt: ARCHITECT_SYSTEM_PROMPT,
-        outputFormat: 'stream-json',
-        maxTurns: 1,
-        skipGuardrails: true // Architect has no tools, just outputs JSON
-      })
-      console.log('[VIBE:Architect] cli.run() returned (process spawned)')
+    // Use non-streaming json format — no --verbose, no tool access, no CLAUDE.md context
+    const resultText = await ClaudeCli.runJson({
+      prompt: intent,
+      systemPrompt: ARCHITECT_SYSTEM_PROMPT,
+      maxTurns: 1,
+      timeoutMs: 60_000
     })
+
+    console.log('[VIBE:Architect] resultText:', resultText.slice(0, 500))
+
+    const parsed = this.parseTaskArray(resultText)
+    const capped = parsed.slice(0, MAX_TASKS_PER_INTENT)
+    const validIds = new Set(capped.map((t) => t.id))
+    const tasks: AgentTask[] = capped.map((t) => ({
+      id: t.id,
+      description: String(t.description || '').slice(0, 2000),
+      type: t.type || 'code',
+      status: 'pending' as const,
+      agent: 'worker' as const,
+      dependencies: (t.dependencies || []).filter((d: string) => validIds.has(d))
+    }))
+    console.log('[VIBE:Architect] parsed tasks:', tasks.length)
+    return tasks
   }
 
   private parseTaskArray(text: string): Array<{ id: string; description: string; type: AgentTask['type']; dependencies: string[] }> {

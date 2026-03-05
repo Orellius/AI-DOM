@@ -179,6 +179,44 @@ export class ClaudeCli extends EventEmitter {
     })
   }
 
+  /**
+   * Non-streaming prompt → response. Uses `json` output format (no --verbose).
+   * Returns the raw text result. Ideal for architect / planner calls with no tool access.
+   */
+  static async runJson(options: {
+    prompt: string
+    systemPrompt?: string
+    maxTurns?: number
+    timeoutMs?: number
+  }): Promise<string> {
+    if (!options.prompt || typeof options.prompt !== 'string') {
+      throw new Error('Prompt must be a non-empty string')
+    }
+    if (options.prompt.length > MAX_PROMPT_LENGTH) {
+      throw new Error(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`)
+    }
+
+    const args = ['-p', options.prompt, '--output-format', 'json']
+    if (options.systemPrompt) {
+      args.push('--system-prompt', options.systemPrompt)
+    }
+    if (options.maxTurns !== undefined) {
+      args.push('--max-turns', String(options.maxTurns))
+    }
+
+    const raw = await ClaudeCli.execSpawn(args, options.timeoutMs ?? PROCESS_TIMEOUT_MS)
+
+    // json output format returns { type: "result", result: "...", ... }
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed.result) return parsed.result
+      // Fallback: some versions return the text directly
+      return raw
+    } catch {
+      return raw
+    }
+  }
+
   private static execSpawn(args: string[], timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const proc = spawn('claude', args, {

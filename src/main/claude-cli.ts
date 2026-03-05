@@ -72,6 +72,8 @@ export interface ClaudeCliOptions {
   cwd?: string
   timeoutMs?: number
   dangerouslySkipPermissions?: boolean
+  /** Skip guardrail injection (e.g. for architect calls with no tool access) */
+  skipGuardrails?: boolean
 }
 
 export interface ClaudeInitEvent {
@@ -266,11 +268,17 @@ export class ClaudeCli extends EventEmitter {
 
     const args = ['-p', options.prompt, '--output-format', options.outputFormat, '--verbose']
 
-    // Always inject guardrail system prompt, prepend to user's system prompt if any
-    const fullSystemPrompt = options.systemPrompt
-      ? GUARDRAIL_SYSTEM_PROMPT + '\n\n' + options.systemPrompt
-      : GUARDRAIL_SYSTEM_PROMPT
-    args.push('--system-prompt', fullSystemPrompt)
+    // Inject guardrail system prompt (skip for architect-only calls with no tools)
+    if (options.skipGuardrails) {
+      if (options.systemPrompt) {
+        args.push('--system-prompt', options.systemPrompt)
+      }
+    } else {
+      const fullSystemPrompt = options.systemPrompt
+        ? GUARDRAIL_SYSTEM_PROMPT + '\n\n' + options.systemPrompt
+        : GUARDRAIL_SYSTEM_PROMPT
+      args.push('--system-prompt', fullSystemPrompt)
+    }
     if (options.maxTurns !== undefined) {
       args.push('--max-turns', String(options.maxTurns))
     }

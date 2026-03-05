@@ -517,7 +517,8 @@ export class AgentOrchestrator extends EventEmitter {
         prompt: intent,
         systemPrompt: ARCHITECT_SYSTEM_PROMPT,
         outputFormat: 'stream-json',
-        maxTurns: 1
+        maxTurns: 1,
+        skipGuardrails: true // Architect has no tools, just outputs JSON
       })
       console.log('[VIBE:Architect] cli.run() returned (process spawned)')
     })

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   FolderGit2, FolderPlus, X, AlertTriangle,
-  FileCode2, Braces, Cog, GitBranch, Play, Hammer, TestTube2, File,
+  FileCode2, Braces, GitBranch, Play, Hammer, TestTube2, File,
   ChevronDown, Brain,
 } from 'lucide-react'
 import { useAgentStore } from '../stores/agentStore'
@@ -186,10 +186,9 @@ function ProjectSummaryCard(): JSX.Element | null {
 
 interface UmbrellaSyncProps {
   onOpenWorkspaceProfile?: () => void
-  onOpenSettings?: () => void
 }
 
-export function UmbrellaSync({ onOpenWorkspaceProfile, onOpenSettings }: UmbrellaSyncProps = {}): JSX.Element {
+export function UmbrellaSync({ onOpenWorkspaceProfile }: UmbrellaSyncProps = {}): JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [switching, setSwitching] = useState<string | null>(null)
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
@@ -542,39 +541,6 @@ export function UmbrellaSync({ onOpenWorkspaceProfile, onOpenSettings }: Umbrell
         </>
       )}
 
-      {/* Settings button — fixed at bottom */}
-      {onOpenSettings && (
-        <div
-          className="shrink-0"
-          style={{
-            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-            paddingTop: '6px',
-            marginTop: '6px',
-          }}
-        >
-          <button
-            onClick={onOpenSettings}
-            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 w-full text-left transition-colors"
-            style={{
-              color: 'var(--color-text-dim)',
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'var(--color-surface-light)'
-              e.currentTarget.style.color = 'var(--color-text-muted)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent'
-              e.currentTarget.style.color = 'var(--color-text-dim)'
-            }}
-          >
-            <Cog size={13} style={{ flexShrink: 0 }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(11) }}>Settings</span>
-          </button>
-        </div>
-      )}
     </div>
   )
 }

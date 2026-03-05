@@ -267,11 +267,34 @@ function App(): JSX.Element {
             })}
           </div>
 
-          {/* ── Bottom: User + Plan (greyed out) ── */}
+          {/* ── Bottom: Settings + User + Plan (greyed out) ── */}
           <div
             className="shrink-0 border-t px-1.5 py-2 flex flex-col gap-1.5"
             style={{ borderColor: 'var(--color-border)' }}
           >
+            {/* Settings */}
+            <button
+              onClick={() => { setOverlayTab('config'); setActiveTab('stream') }}
+              className="no-drag flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-all w-full text-left"
+              style={{
+                background: overlayTab === 'config' ? 'rgba(0, 232, 157, 0.06)' : 'transparent',
+                color: overlayTab === 'config' ? 'var(--color-accent)' : 'var(--color-text-muted)',
+              }}
+              onMouseEnter={(e) => {
+                if (overlayTab !== 'config') e.currentTarget.style.background = 'var(--color-surface-light)'
+              }}
+              onMouseLeave={(e) => {
+                if (overlayTab !== 'config') e.currentTarget.style.background = 'transparent'
+              }}
+            >
+              <Settings size={15} style={{ flexShrink: 0 }} />
+              {!navCollapsed && (
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: scaled(13), fontWeight: overlayTab === 'config' ? 500 : 400, whiteSpace: 'nowrap' }}>
+                  Settings
+                </span>
+              )}
+            </button>
+
             {/* Subscription / Plan box */}
             <div
               className="rounded-lg px-2.5 py-2 flex items-center gap-2.5"
@@ -375,7 +398,6 @@ function App(): JSX.Element {
         >
           <UmbrellaSync
             onOpenWorkspaceProfile={() => { setOverlayTab('workspace-profile'); setActiveTab('stream') }}
-            onOpenSettings={() => { setOverlayTab('config'); setActiveTab('stream') }}
           />
         </div>
 
